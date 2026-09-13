@@ -33,7 +33,8 @@ Separate custom stock system (any text, staff only):
 - `$custom list` — paste all as spoilers
 - `$custom add <text>` — add item(s) (supports multiple lines)
 - `$custom clear` — clear custom stock
-- `$custompay @user` — DM one custom item
+- `$custompay @user` — DM 1 item to one user
+- `$custompay @role` — DM 1 item to every member in the role
 
 ### `$online @role`
 Shows members with the role who are currently online / idle / dnd (staff only).
@@ -45,6 +46,18 @@ Shows all commands.
 
 ### `$clear`
 Shortcut to clear all MCFA stock (staff only).
+
+
+### `$staffstats`
+Premium staff team overview (staff only).
+
+Configure these environment variables:
+- `OWNER_ROLE_ID`
+- `ADMIN_ROLE_ID`
+- `MODERATOR_ROLE_ID`
+- `SUPPORT_ROLE_ID`
+
+Shows members under each role (highest role wins, no duplicates), online/offline counts, and clean display names (no pings, no IDs).
 
 ## Discord setup
 1. https://discord.com/developers/applications → New Application → Bot

@@ -7,13 +7,23 @@ const {
   GatewayIntentBits,
   Partials,
   EmbedBuilder,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || '';
 const PREFIX = process.env.PREFIX || '$';
 const PORT = process.env.PORT || 3000;
+
+// Staff role hierarchy for $staffstats (highest first)
+const OWNER_ROLE_ID = process.env.OWNER_ROLE_ID || '1547183159794204675';
+const CO_OWNER_ROLE_ID = process.env.CO_OWNER_ROLE_ID || '1547183161300090950';
+const HEAD_ADMIN_ROLE_ID = process.env.HEAD_ADMIN_ROLE_ID || '1547183162457718847';
+const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356';
 const DATA_PATH = process.env.RENDER
   ? path.join('/tmp', 'best-bot-data.json')
   : path.join(__dirname, 'data.json');
@@ -664,6 +674,117 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // ========== $staffstats ==========
+  if (cmd === 'staffstats') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+
+    // Role hierarchy (highest priority first) — members appear only under their highest role
+    const staffRoleConfig = [
+      { id: OWNER_ROLE_ID, label: '👑 Owner', key: 'owner' },
+      { id: CO_OWNER_ROLE_ID, label: '💎 Co-Owner', key: 'coowner' },
+      { id: HEAD_ADMIN_ROLE_ID, label: '🛡️ Head Admin', key: 'headadmin' },
+      { id: ADMIN_ROLE_ID, label: '⚔️ Admin', key: 'admin' }
+    ].filter((r) => r.id); // only keep configured ones
+
+    if (!staffRoleConfig.length) {
+      return message.reply(
+        'No staff roles configured.\n' +
+          'Set `OWNER_ROLE_ID`, `CO_OWNER_ROLE_ID`, `HEAD_ADMIN_ROLE_ID`, `ADMIN_ROLE_ID` in your environment.'
+      );
+    }
+
+    try {
+      await message.guild.members.fetch();
+    } catch (_) {}
+
+    // Map: key → array of clean display names
+    const groups = {};
+    const counted = new Set(); // prevent duplicates across roles
+    let totalStaff = 0;
+    let onlineCount = 0;
+    let offlineCount = 0;
+
+    for (const cfg of staffRoleConfig) {
+      groups[cfg.key] = [];
+      const role = message.guild.roles.cache.get(cfg.id);
+      if (!role) continue;
+
+      for (const [, member] of role.members) {
+        if (member.user.bot) continue;
+        if (counted.has(member.id)) continue; // already listed under higher role
+        counted.add(member.id);
+
+        const name = member.displayName || member.user.username;
+        groups[cfg.key].push(name);
+        totalStaff++;
+
+        const status = member.presence?.status;
+        if (status && ['online', 'idle', 'dnd'].includes(status)) {
+          onlineCount++;
+        } else {
+          offlineCount++;
+        }
+      }
+    }
+
+    // Build description sections
+    const sections = [];
+    for (const cfg of staffRoleConfig) {
+      const role = message.guild.roles.cache.get(cfg.id);
+      if (!role) continue;
+      const names = groups[cfg.key] || [];
+      if (!names.length) {
+        sections.push(`**${cfg.label}**\n• —`);
+      } else {
+        sections.push(`**${cfg.label}**\n${names.map((n) => `• ${n}`).join('\n')}`);
+      }
+    }
+
+    // Role counts line
+    const roleCounts = staffRoleConfig
+      .map((cfg) => {
+        const role = message.guild.roles.cache.get(cfg.id);
+        if (!role) return null;
+        const count = (groups[cfg.key] || []).length;
+        return `• ${role.name}: ${count}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+
+    const embed = new EmbedBuilder()
+      .setColor(0x2b2d31)
+      .setTitle('🛡️ STAFF STATS')
+      .setDescription(
+        [
+          '```',
+          '╭───────────────╮',
+          '  STAFF TEAM',
+          '╰───────────────╯',
+          '```',
+          '',
+          sections.join('\n\n'),
+          '',
+          '━━━━━━━━━━━━━━━━━━━━',
+          '',
+          '**SERVER STAFF OVERVIEW**',
+          `👥 Total Staff: **${totalStaff}**`,
+          `🟢 Currently Online: **${onlineCount}**`,
+          `⚫ Currently Offline: **${offlineCount}**`,
+          '',
+          '**ROLES**',
+          roleCounts || '• No roles found',
+          '',
+          '━━━━━━━━━━━━━━━━━━━━'
+        ].join('\n')
+      )
+      .setFooter({ text: 'Ultimate Rewards • Staff Management' })
+      .setTimestamp();
+
+    // Simple pagination if description would be too long (> 4000 chars)
+    // For most servers this single embed is enough. If needed later we can add buttons.
+    return message.reply({ embeds: [embed] });
+  }
+
   // ========== $help ==========
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
@@ -692,8 +813,11 @@ client.on('messageCreate', async (message) => {
           '`$custompay @user` — DM 1 item to one user',
           '`$custompay @role` — DM 1 item to every member in the role',
           '',
-          '**Other**',
+          '**Staff Management**',
+          '`$staffstats` — premium staff team overview',
           '`$online @role` — show online members in a role',
+          '',
+          '**Other**',
           '`$help` — this message'
         ].join('\n')
       )

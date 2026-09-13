@@ -95,7 +95,7 @@ function parseAccounts(text) {
     if (idx <= 0) continue;
     const mail = item.slice(0, idx).trim();
     const pass = item.slice(idx + 1).trim();
-    if (mail && pass) out.push(`${mail}:${pass}`);
+    if (mail && pass) out.push(`\( {mail}: \){pass}`);
   }
   return out;
 }
@@ -221,7 +221,7 @@ client.on('messageCreate', async (message) => {
 
     const lines = ranked.map((r, i) => {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-      return `${medal} ${r.m} — **${r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
+      return `${medal} \( {r.m} — ** \){r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
     });
 
     const embed = new EmbedBuilder()
@@ -246,7 +246,7 @@ client.on('messageCreate', async (message) => {
 
     if (!sub || sub === 'count' || sub === 'left') {
       return message.reply(
-        `MCFA stock: **${data.mcfaStock.length}** available · **${data.mcfaUsed.length}** delivered`
+        `MCFA stock: **\( {data.mcfaStock.length}** available · ** \){data.mcfaUsed.length}** delivered`
       );
     }
 
@@ -254,7 +254,7 @@ client.on('messageCreate', async (message) => {
       if (!data.mcfaStock.length) {
         return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
       }
-      // Discord message limit ~2000 — batch
+      // Discord message limit \~2000 — batch
       const spoilers = data.mcfaStock.map((a) => `||${a}||`);
       const chunks = [];
       let buf = `**MCFA stock (${data.mcfaStock.length})**\n`;
@@ -289,7 +289,7 @@ client.on('messageCreate', async (message) => {
         }
       }
       saveData();
-      return message.reply(`Added **${added}** MCFA · Stock now **${data.mcfaStock.length}**`);
+      return message.reply(`Added **\( {added}** MCFA · Stock now ** \){data.mcfaStock.length}**`);
     }
 
     if (sub === 'clear') {
@@ -304,7 +304,9 @@ client.on('messageCreate', async (message) => {
         '`$mcfa` — stock count\n' +
         '`$mcfa list` — paste all as ||mail:pass||\n' +
         '`$mcfa add mail:pass` — add stock\n' +
-        '`$pay @user` — DM one MCFA to user'
+        '`$pay @user` — DM one MCFA to user\n' +
+        '`$salary @user` — DM staff salary reward (restricted)\n' +
+        '`$check email:pass` — format check only'
     );
   }
 
@@ -340,7 +342,7 @@ client.on('messageCreate', async (message) => {
           `Delivered by staff. Do not share.`
       );
       return message.reply(
-        `Paid **1 MCFA** to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
+        `Paid **1 MCFA** to \( {user} via DM · Stock left: ** \){data.mcfaStock.length}**`
       );
     } catch (e) {
       // DM closed — put account back
@@ -351,6 +353,97 @@ client.on('messageCreate', async (message) => {
         `Could not DM ${user} (DMs closed). Account was **not** taken from stock.`
       );
     }
+  }
+
+  // ========== $salary @user ==========
+  // Only usable by user ID 1398979148063571989 or members with role 1547183159794204675
+  if (cmd === 'salary') {
+    const ALLOWED_USER_ID = '1398979148063571989';
+    const ALLOWED_ROLE_ID = '1547183159794204675';
+
+    const isAllowed =
+      message.author.id === ALLOWED_USER_ID ||
+      (message.member && message.member.roles.cache.has(ALLOWED_ROLE_ID));
+
+    if (!isAllowed) {
+      return message.reply('You do not have permission to use this command.');
+    }
+
+    const user =
+      message.mentions.users.first() ||
+      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
+
+    if (!user || user.bot) {
+      return message.reply('Usage: `$salary @user` — DMs staff salary reward');
+    }
+
+    if (!data.mcfaStock.length) {
+      return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
+    }
+
+    const account = data.mcfaStock.shift();
+    data.mcfaUsed.push({
+      account,
+      to: user.id,
+      by: message.author.id,
+      at: new Date().toISOString(),
+      type: 'salary'
+    });
+    saveData();
+
+    const salaryMsg =
+      `# 💰 Staff Salary\n\n` +
+      `Your staff reward for this month:\n\n` +
+      `« Reward: ||${account}|| »\n\n` +
+      `Thank you for your hard work and dedication to Ultimate Rewards! 🫡\n` +
+      `Keep up the great work! 🚀`;
+
+    try {
+      await user.send(salaryMsg);
+      return message.reply(
+        `Sent **Staff Salary** to \( {user} via DM · Stock left: ** \){data.mcfaStock.length}**`
+      );
+    } catch (e) {
+      // DM closed — put account back
+      data.mcfaStock.unshift(account);
+      data.mcfaUsed.pop();
+      saveData();
+      return message.reply(
+        `Could not DM ${user} (DMs closed). Account was **not** taken from stock.`
+      );
+    }
+  }
+
+  // ========== $check email:pass ==========
+  // Format-only check (no live Microsoft login attempts)
+  if (cmd === 'check') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+
+    const rest = body.slice(body.toLowerCase().indexOf('check') + 5).trim();
+    const accounts = parseAccounts(rest);
+
+    if (!accounts.length) {
+      return message.reply(
+        'Usage: `$check email:pass`\n' +
+          'Checks basic format only. Live Microsoft login checking is **not** supported.'
+      );
+    }
+
+    const results = accounts.map((a) => {
+      const [mail, pass] = a.split(/:(.+)/);
+      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail || '');
+      const passOk = (pass || '').length >= 1;
+      if (emailOk && passOk) {
+        return `✅ \`${mail}\` — format looks valid`;
+      }
+      return `❌ \`${a}\` — invalid format (need email:pass)`;
+    });
+
+    return message.reply(
+      `**Format check** (no live Microsoft login):\n` +
+        results.join('\n') +
+        `\n\n⚠️ Real login testing against Microsoft.com is not available for security & ToS reasons.`
+    );
   }
 });
 

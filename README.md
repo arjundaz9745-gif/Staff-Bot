@@ -1,23 +1,13 @@
-# Best Bot — `$best @role`
-
-Shows top members in a role by **messages + invites** (combined score).
-
-## Score
-- 1 message = 1 point
-- 1 invite = 25 points
-
-## Command
-```
-$best @RoleName
-```
-Staff only (Manage Server / Admin / Manage Messages / or STAFF_ROLE_ID).
+### `$check email:pass`
+Basic format check only (staff).  
+Does **not** perform live Microsoft login tests (not supported for security & ToS reasons).
 
 ## Discord setup
 1. https://discord.com/developers/applications → New Application → Bot
 2. Enable intents:
    - Message Content Intent
    - Server Members Intent
-3. Invite bot with permissions: Read Messages, Send Messages, Manage Server (for invites)
+3. Invite bot with permissions: Read Messages, Send Messages, Manage Server (for invites), Send DMs
 4. Copy bot token
 
 ## Render deploy

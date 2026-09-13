@@ -1,6 +1,6 @@
 # Staff Bot
 
-Discord bot with staff tools, leaderboard, MCFA stock & salary delivery.
+Discord bot with staff tools, leaderboard, MCFA + custom stock, salary delivery & online checker.
 
 ## Commands
 
@@ -8,14 +8,14 @@ Discord bot with staff tools, leaderboard, MCFA stock & salary delivery.
 Shows top members in a role by **messages + invites** (combined score).
 - 1 message = 1 point
 - 1 invite = 25 points  
-Staff only (Manage Server / Admin / Manage Messages / or STAFF_ROLE_ID).
+Staff only.
 
 ### `$mcfa` / `$stock`
 Manage MCFA (email:pass) stock (staff only):
 - `$mcfa` — stock count
 - `$mcfa list` — paste stock as spoilers
 - `$mcfa add mail:pass` — add accounts
-- `$mcfa clear` — clear stock
+- `$mcfa clear` or `$clear` — clear MCFA stock
 
 ### `$pay @user`
 DM one MCFA account from stock to the user (staff only).
@@ -27,23 +27,31 @@ DM the official **Staff Salary** reward message (with one MCFA account from stoc
 - User ID `1398979148063571989`
 - **or** members who have role ID `1547183159794204675`
 
-Message sent:
-```
-# 💰 Staff Salary
+### `$custom`
+Separate custom stock system (any text, staff only):
+- `$custom` — stock count
+- `$custom list` — paste all as spoilers
+- `$custom add <text>` — add item(s) (supports multiple lines)
+- `$custom clear` — clear custom stock
+- `$custompay @user` — DM one custom item
 
-Your staff reward for this month:
+### `$online @role`
+Shows members with the role who are currently online / idle / dnd (staff only).
 
-« Reward: ||email:pass|| »
+> Requires **Presence Intent** enabled in Discord Developer Portal.
 
-Thank you for your hard work and dedication to Ultimate Rewards! 🫡
-Keep up the great work! 🚀
-```
+### `$help`
+Shows all commands.
+
+### `$clear`
+Shortcut to clear all MCFA stock (staff only).
 
 ## Discord setup
 1. https://discord.com/developers/applications → New Application → Bot
 2. Enable intents:
    - Message Content Intent
    - Server Members Intent
+   - **Presence Intent** (needed for `$online`)
 3. Invite bot with permissions: Read Messages, Send Messages, Manage Server (for invites), Send DMs
 4. Copy bot token
 

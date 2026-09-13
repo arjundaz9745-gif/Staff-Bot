@@ -39,12 +39,22 @@ function loadData() {
       if (!d.inviteUses) d.inviteUses = {};
       if (!Array.isArray(d.mcfaStock)) d.mcfaStock = [];
       if (!Array.isArray(d.mcfaUsed)) d.mcfaUsed = [];
+      if (!Array.isArray(d.customStock)) d.customStock = [];
+      if (!Array.isArray(d.customUsed)) d.customUsed = [];
       return d;
     }
   } catch (e) {
     console.error('Load error:', e.message);
   }
-  return { messages: {}, invites: {}, inviteUses: {}, mcfaStock: [], mcfaUsed: [] };
+  return {
+    messages: {},
+    invites: {},
+    inviteUses: {},
+    mcfaStock: [],
+    mcfaUsed: [],
+    customStock: [],
+    customUsed: []
+  };
 }
 
 function saveData() {
@@ -64,7 +74,8 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildInvites,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildPresences
   ],
   partials: [Partials.Channel]
 });
@@ -304,6 +315,7 @@ client.on('messageCreate', async (message) => {
         '`$mcfa` — stock count\n' +
         '`$mcfa list` — paste all as ||mail:pass||\n' +
         '`$mcfa add mail:pass` — add stock\n' +
+        '`$mcfa clear` / `$clear` — clear stock\n' +
         '`$pay @user` — DM one MCFA to user\n' +
         '`$salary @user` — DM staff salary reward (restricted)'
     );
@@ -411,6 +423,215 @@ client.on('messageCreate', async (message) => {
         `Could not DM ${user} (DMs closed). Account was **not** taken from stock.`
       );
     }
+  }
+
+  // ========== $clear ==========
+  // Shortcut to clear MCFA stock
+  if (cmd === 'clear') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const n = data.mcfaStock.length;
+    data.mcfaStock = [];
+    saveData();
+    return message.reply(`Cleared **${n}** from MCFA stock.`);
+  }
+
+  // ========== $online @role ==========
+  if (cmd === 'online') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+
+    const role =
+      message.mentions.roles.first() ||
+      message.guild.roles.cache.get((args[0] || '').replace(/[<@&>]/g, ''));
+
+    if (!role) {
+      return message.reply('Usage: `$online @role`');
+    }
+
+    try {
+      await message.guild.members.fetch();
+    } catch (_) {}
+
+    const onlineMembers = message.guild.members.cache.filter(
+      (m) =>
+        !m.user.bot &&
+        m.roles.cache.has(role.id) &&
+        m.presence &&
+        ['online', 'idle', 'dnd'].includes(m.presence.status)
+    );
+
+    if (!onlineMembers.size) {
+      return message.reply(`No online members found with role **${role.name}**.`);
+    }
+
+    const lines = [...onlineMembers.values()]
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .map((m) => {
+        const status = m.presence?.status || 'unknown';
+        const emoji = status === 'online' ? '🟢' : status === 'idle' ? '🟡' : '🔴';
+        return `${emoji} ${m} (\`${status}\`)`;
+      });
+
+    const embed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle(`Online in @${role.name}`)
+      .setDescription(lines.join('\n'))
+      .setFooter({ text: `${onlineMembers.size} online` })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+  }
+
+  // ========== $custom (custom stock system) ==========
+  if (cmd === 'custom') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+
+    const sub = (args[0] || '').toLowerCase();
+
+    if (!sub || sub === 'count' || sub === 'left') {
+      return message.reply(
+        `Custom stock: **${data.customStock.length}** available · **${data.customUsed.length}** delivered`
+      );
+    }
+
+    if (sub === 'list' || sub === 'paste') {
+      if (!data.customStock.length) {
+        return message.reply('No custom stock left. Add with `$custom add <text>`');
+      }
+      const spoilers = data.customStock.map((a) => `||${a}||`);
+      const chunks = [];
+      let buf = `**Custom stock (${data.customStock.length})**\n`;
+      for (const s of spoilers) {
+        if ((buf + s + '\n').length > 1900) {
+          chunks.push(buf);
+          buf = '';
+        }
+        buf += s + '\n';
+      }
+      if (buf.trim()) chunks.push(buf);
+      for (const c of chunks) {
+        await message.channel.send(c);
+      }
+      return;
+    }
+
+    if (sub === 'add') {
+      const rest = body.slice(body.toLowerCase().indexOf('add') + 3).trim();
+      if (!rest) {
+        return message.reply('Usage: `$custom add <any text>`');
+      }
+      // allow multiple lines / items separated by newlines
+      const items = rest
+        .split(/\n+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      let added = 0;
+      for (const item of items) {
+        if (!data.customStock.includes(item)) {
+          data.customStock.push(item);
+          added++;
+        }
+      }
+      saveData();
+      return message.reply(`Added **${added}** custom item(s) · Stock now **${data.customStock.length}**`);
+    }
+
+    if (sub === 'clear') {
+      const n = data.customStock.length;
+      data.customStock = [];
+      saveData();
+      return message.reply(`Cleared **${n}** from custom stock.`);
+    }
+
+    return message.reply(
+      'Custom commands (staff):\n' +
+        '`$custom` — stock count\n' +
+        '`$custom list` — paste all as spoilers\n' +
+        '`$custom add <text>` — add item(s)\n' +
+        '`$custom clear` — clear custom stock\n' +
+        '`$custompay @user` — DM one custom item to user'
+    );
+  }
+
+  // ========== $custompay @user ==========
+  if (cmd === 'custompay') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+
+    const user =
+      message.mentions.users.first() ||
+      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
+
+    if (!user || user.bot) {
+      return message.reply('Usage: `$custompay @user` — sends 1 custom item to their DM');
+    }
+
+    if (!data.customStock.length) {
+      return message.reply('No custom stock left. Add with `$custom add <text>`');
+    }
+
+    const item = data.customStock.shift();
+    data.customUsed.push({
+      item,
+      to: user.id,
+      by: message.author.id,
+      at: new Date().toISOString()
+    });
+    saveData();
+
+    try {
+      await user.send(
+        `**Custom delivery**\n` +
+          `Here is your item (click to reveal):\n||${item}||\n\n` +
+          `Delivered by staff.`
+      );
+      return message.reply(
+        `Sent **1 custom item** to ${user} via DM · Stock left: **${data.customStock.length}**`
+      );
+    } catch (e) {
+      data.customStock.unshift(item);
+      data.customUsed.pop();
+      saveData();
+      return message.reply(
+        `Could not DM ${user} (DMs closed). Item was **not** taken from stock.`
+      );
+    }
+  }
+
+  // ========== $help ==========
+  if (cmd === 'help') {
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle('Staff Bot — Commands')
+      .setDescription(
+        [
+          '**Leaderboard**',
+          '`$best @role` — top members by messages + invites',
+          '',
+          '**MCFA Stock**',
+          '`$mcfa` / `$stock` — stock count',
+          '`$mcfa list` — show all accounts',
+          '`$mcfa add mail:pass` — add accounts',
+          '`$mcfa clear` or `$clear` — clear MCFA stock',
+          '`$pay @user` — DM 1 MCFA account',
+          '',
+          '**Salary**',
+          '`$salary @user` — DM staff salary reward *(restricted)*',
+          '',
+          '**Custom Stock**',
+          '`$custom` — custom stock count',
+          '`$custom list` — show all custom items',
+          '`$custom add <text>` — add custom item(s)',
+          '`$custom clear` — clear custom stock',
+          '`$custompay @user` — DM 1 custom item',
+          '',
+          '**Other**',
+          '`$online @role` — show online members in a role',
+          '`$help` — this message'
+        ].join('\n')
+      )
+      .setFooter({ text: 'Most commands are staff-only' })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
   }
 
 });

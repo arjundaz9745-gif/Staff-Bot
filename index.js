@@ -95,7 +95,7 @@ function parseAccounts(text) {
     if (idx <= 0) continue;
     const mail = item.slice(0, idx).trim();
     const pass = item.slice(idx + 1).trim();
-    if (mail && pass) out.push(`\( {mail}: \){pass}`);
+    if (mail && pass) out.push(`${mail}:${pass}`);
   }
   return out;
 }
@@ -221,7 +221,7 @@ client.on('messageCreate', async (message) => {
 
     const lines = ranked.map((r, i) => {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-      return `${medal} \( {r.m} — ** \){r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
+      return `${medal} ${r.m} — **${r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
     });
 
     const embed = new EmbedBuilder()
@@ -246,7 +246,7 @@ client.on('messageCreate', async (message) => {
 
     if (!sub || sub === 'count' || sub === 'left') {
       return message.reply(
-        `MCFA stock: **\( {data.mcfaStock.length}** available · ** \){data.mcfaUsed.length}** delivered`
+        `MCFA stock: **${data.mcfaStock.length}** available · **${data.mcfaUsed.length}** delivered`
       );
     }
 
@@ -254,7 +254,7 @@ client.on('messageCreate', async (message) => {
       if (!data.mcfaStock.length) {
         return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
       }
-      // Discord message limit \~2000 — batch
+      // Discord message limit ~2000 — batch
       const spoilers = data.mcfaStock.map((a) => `||${a}||`);
       const chunks = [];
       let buf = `**MCFA stock (${data.mcfaStock.length})**\n`;
@@ -289,7 +289,7 @@ client.on('messageCreate', async (message) => {
         }
       }
       saveData();
-      return message.reply(`Added **\( {added}** MCFA · Stock now ** \){data.mcfaStock.length}**`);
+      return message.reply(`Added **${added}** MCFA · Stock now **${data.mcfaStock.length}**`);
     }
 
     if (sub === 'clear') {
@@ -342,7 +342,7 @@ client.on('messageCreate', async (message) => {
           `Delivered by staff. Do not share.`
       );
       return message.reply(
-        `Paid **1 MCFA** to \( {user} via DM · Stock left: ** \){data.mcfaStock.length}**`
+        `Paid **1 MCFA** to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
       );
     } catch (e) {
       // DM closed — put account back
@@ -401,7 +401,7 @@ client.on('messageCreate', async (message) => {
     try {
       await user.send(salaryMsg);
       return message.reply(
-        `Sent **Staff Salary** to \( {user} via DM · Stock left: ** \){data.mcfaStock.length}**`
+        `Sent **Staff Salary** to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
       );
     } catch (e) {
       // DM closed — put account back

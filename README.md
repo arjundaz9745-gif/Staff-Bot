@@ -1,3 +1,44 @@
+# Staff Bot
+
+Discord bot with staff tools, leaderboard, MCFA stock & salary delivery.
+
+## Commands
+
+### `$best @role`
+Shows top members in a role by **messages + invites** (combined score).
+- 1 message = 1 point
+- 1 invite = 25 points  
+Staff only (Manage Server / Admin / Manage Messages / or STAFF_ROLE_ID).
+
+### `$mcfa` / `$stock`
+Manage MCFA (email:pass) stock (staff only):
+- `$mcfa` — stock count
+- `$mcfa list` — paste stock as spoilers
+- `$mcfa add mail:pass` — add accounts
+- `$mcfa clear` — clear stock
+
+### `$pay @user`
+DM one MCFA account from stock to the user (staff only).
+
+### `$salary @user`
+DM the official **Staff Salary** reward message (with one MCFA account from stock).
+
+**Restricted** to:
+- User ID `1398979148063571989`
+- **or** members who have role ID `1547183159794204675`
+
+Message sent:
+```
+# 💰 Staff Salary
+
+Your staff reward for this month:
+
+« Reward: ||email:pass|| »
+
+Thank you for your hard work and dedication to Ultimate Rewards! 🫡
+Keep up the great work! 🚀
+```
+
 ### `$check email:pass`
 Basic format check only (staff).  
 Does **not** perform live Microsoft login tests (not supported for security & ToS reasons).

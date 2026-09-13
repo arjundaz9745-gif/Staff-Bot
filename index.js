@@ -23,7 +23,6 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// Keep Render Web Service alive (must bind a port)
 http
   .createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -34,15 +33,21 @@ http
 function loadData() {
   try {
     if (fs.existsSync(DATA_PATH)) {
-      return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+      const d = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+      if (!d.messages) d.messages = {};
+      if (!d.invites) d.invites = {};
+      if (!d.inviteUses) d.inviteUses = {};
+      if (!Array.isArray(d.mcfaStock)) d.mcfaStock = [];
+      if (!Array.isArray(d.mcfaUsed)) d.mcfaUsed = [];
+      return d;
     }
   } catch (e) {
     console.error('Load error:', e.message);
   }
-  return { messages: {}, invites: {}, inviteUses: {} };
+  return { messages: {}, invites: {}, inviteUses: {}, mcfaStock: [], mcfaUsed: [] };
 }
 
-function saveData(data) {
+function saveData() {
   try {
     fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
   } catch (e) {
@@ -58,7 +63,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildInvites
+    GatewayIntentBits.GuildInvites,
+    GatewayIntentBits.DirectMessages
   ],
   partials: [Partials.Channel]
 });
@@ -73,10 +79,31 @@ function isStaff(member) {
   return false;
 }
 
+function parseAccounts(text) {
+  // Accept: mail:pass | mail:pass,mail:pass | one per line | with ||spoilers||
+  const cleaned = text
+    .replace(/\|\|/g, ' ')
+    .replace(/,/g, '\n')
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  for (const item of cleaned) {
+    if (!item.includes(':')) continue;
+    // basic mail:pass (allow extra colons in pass)
+    const idx = item.indexOf(':');
+    if (idx <= 0) continue;
+    const mail = item.slice(0, idx).trim();
+    const pass = item.slice(idx + 1).trim();
+    if (mail && pass) out.push(`${mail}:${pass}`);
+  }
+  return out;
+}
+
 function addMessage(guildId, userId) {
   if (!data.messages[guildId]) data.messages[guildId] = {};
   data.messages[guildId][userId] = (data.messages[guildId][userId] || 0) + 1;
-  saveData(data);
+  saveData();
 }
 
 async function cacheGuildInvites(guild) {
@@ -89,7 +116,7 @@ async function cacheGuildInvites(guild) {
         inviterId: inv.inviter?.id || null
       };
     });
-    saveData(data);
+    saveData();
   } catch (e) {
     console.error('Invite cache failed:', e.message);
   }
@@ -100,7 +127,7 @@ async function onReady() {
   for (const [, guild] of client.guilds.cache) {
     await cacheGuildInvites(guild);
   }
-  setInterval(() => saveData(data), 60_000);
+  setInterval(() => saveData(), 60_000);
 }
 
 client.once('ready', onReady);
@@ -113,7 +140,7 @@ client.on('inviteCreate', async (invite) => {
       uses: invite.uses || 0,
       inviterId: invite.inviter?.id || null
     };
-    saveData(data);
+    saveData();
   } catch (_) {}
 });
 
@@ -140,7 +167,7 @@ client.on('guildMemberAdd', async (member) => {
       if (!data.invites[gid]) data.invites[gid] = {};
       data.invites[gid][uid] = (data.invites[gid][uid] || 0) + 1;
     }
-    saveData(data);
+    saveData();
   } catch (e) {
     console.error('guildMemberAdd invite track:', e.message);
   }
@@ -154,60 +181,177 @@ client.on('messageCreate', async (message) => {
   if (!message.content.startsWith(PREFIX)) return;
 
   const body = message.content.slice(PREFIX.length).trim();
-  const [cmd] = body.split(/\s+/);
-  if (!cmd || cmd.toLowerCase() !== 'best') return;
+  const args = body.split(/\s+/);
+  const cmd = (args.shift() || '').toLowerCase();
+  if (!cmd) return;
 
-  if (!isStaff(message.member)) {
-    return message.reply('Staff only.');
-  }
+  // ========== $best @role ==========
+  if (cmd === 'best') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
 
-  const role =
-    message.mentions.roles.first() ||
-    message.guild.roles.cache.get(
-      (body.split(/\s+/)[1] || '').replace(/[<@&>]/g, '')
+    const role =
+      message.mentions.roles.first() ||
+      message.guild.roles.cache.get((args[0] || '').replace(/[<@&>]/g, ''));
+
+    if (!role) {
+      return message.reply('Usage: `$best @role`');
+    }
+
+    try {
+      await message.guild.members.fetch();
+    } catch (_) {}
+
+    const membersWithRole = message.guild.members.cache.filter(
+      (m) => !m.user.bot && m.roles.cache.has(role.id)
     );
 
-  if (!role) {
-    return message.reply('Usage: `$best @role`\nExample: `$best @Members`');
+    if (!membersWithRole.size) {
+      return message.reply(`No members found with role **${role.name}**.`);
+    }
+
+    const ranked = [...membersWithRole.values()]
+      .map((m) => {
+        const messages = data.messages[message.guild.id]?.[m.id] || 0;
+        const invites = data.invites[message.guild.id]?.[m.id] || 0;
+        const score = messages + invites * 25;
+        return { m, messages, invites, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15);
+
+    const lines = ranked.map((r, i) => {
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+      return `${medal} ${r.m} — **${r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
+    });
+
+    const embed = new EmbedBuilder()
+      .setColor(0xe8c84a)
+      .setTitle(`Best in @${role.name}`)
+      .setDescription(lines.join('\n') || 'No data yet.')
+      .setFooter({ text: 'Score = messages + (invites × 25)' })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
   }
 
-  try {
-    await message.guild.members.fetch();
-  } catch (_) {}
+  // ========== $mcfa / $stock ==========
+  // $mcfa              → show stock count (staff)
+  // $mcfa list         → paste available as ||mail:pass|| (staff, in channel)
+  // $mcfa add ...      → add accounts (staff)
+  // $stock ...         → same aliases
+  if (cmd === 'mcfa' || cmd === 'stock') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
 
-  const membersWithRole = message.guild.members.cache.filter(
-    (m) => !m.user.bot && m.roles.cache.has(role.id)
-  );
+    const sub = (args[0] || '').toLowerCase();
 
-  if (!membersWithRole.size) {
-    return message.reply(`No members found with role **${role.name}**.`);
+    if (!sub || sub === 'count' || sub === 'left') {
+      return message.reply(
+        `MCFA stock: **${data.mcfaStock.length}** available · **${data.mcfaUsed.length}** delivered`
+      );
+    }
+
+    if (sub === 'list' || sub === 'paste') {
+      if (!data.mcfaStock.length) {
+        return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
+      }
+      // Discord message limit ~2000 — batch
+      const spoilers = data.mcfaStock.map((a) => `||${a}||`);
+      const chunks = [];
+      let buf = `**MCFA stock (${data.mcfaStock.length})**\n`;
+      for (const s of spoilers) {
+        if ((buf + s + '\n').length > 1900) {
+          chunks.push(buf);
+          buf = '';
+        }
+        buf += s + '\n';
+      }
+      if (buf.trim()) chunks.push(buf);
+      for (const c of chunks) {
+        await message.channel.send(c);
+      }
+      return;
+    }
+
+    if (sub === 'add') {
+      const rest = body.slice(body.toLowerCase().indexOf('add') + 3).trim();
+      const accounts = parseAccounts(rest);
+      if (!accounts.length) {
+        return message.reply(
+          'Usage:\n`$mcfa add mail:pass`\n`$mcfa add mail:pass mail:pass`\nOr multiple lines after add'
+        );
+      }
+      // avoid exact duplicates still in stock
+      let added = 0;
+      for (const a of accounts) {
+        if (!data.mcfaStock.includes(a)) {
+          data.mcfaStock.push(a);
+          added++;
+        }
+      }
+      saveData();
+      return message.reply(`Added **${added}** MCFA · Stock now **${data.mcfaStock.length}**`);
+    }
+
+    if (sub === 'clear') {
+      const n = data.mcfaStock.length;
+      data.mcfaStock = [];
+      saveData();
+      return message.reply(`Cleared **${n}** from stock.`);
+    }
+
+    return message.reply(
+      'MCFA commands (staff):\n' +
+        '`$mcfa` — stock count\n' +
+        '`$mcfa list` — paste all as ||mail:pass||\n' +
+        '`$mcfa add mail:pass` — add stock\n' +
+        '`$pay @user` — DM one MCFA to user'
+    );
   }
 
-  const ranked = [...membersWithRole.values()]
-    .map((m) => {
-      const messages = data.messages[message.guild.id]?.[m.id] || 0;
-      const invites = data.invites[message.guild.id]?.[m.id] || 0;
-      const score = messages + invites * 25;
-      return { m, messages, invites, score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 15);
+  // ========== $pay @user ==========
+  if (cmd === 'pay') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
 
-  const lines = ranked.map((r, i) => {
-    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-    return `${medal} ${r.m} — **${r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
-  });
+    const user =
+      message.mentions.users.first() ||
+      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
 
-  const embed = new EmbedBuilder()
-    .setColor(0xe8c84a)
-    .setTitle(`Best in @${role.name}`)
-    .setDescription(lines.join('\n') || 'No data yet.')
-    .setFooter({
-      text: 'Score = messages + (invites × 25) · Counts from when this bot was added'
-    })
-    .setTimestamp();
+    if (!user || user.bot) {
+      return message.reply('Usage: `$pay @user` — sends 1 MCFA to their DM');
+    }
 
-  return message.reply({ embeds: [embed] });
+    if (!data.mcfaStock.length) {
+      return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
+    }
+
+    const account = data.mcfaStock.shift();
+    data.mcfaUsed.push({
+      account,
+      to: user.id,
+      by: message.author.id,
+      at: new Date().toISOString()
+    });
+    saveData();
+
+    try {
+      await user.send(
+        `**Ultimate Reward — MCFA delivery**\n` +
+          `Here is your account (click to reveal):\n||${account}||\n\n` +
+          `Delivered by staff. Do not share.`
+      );
+      return message.reply(
+        `Paid **1 MCFA** to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
+      );
+    } catch (e) {
+      // DM closed — put account back
+      data.mcfaStock.unshift(account);
+      data.mcfaUsed.pop();
+      saveData();
+      return message.reply(
+        `Could not DM ${user} (DMs closed). Account was **not** taken from stock.`
+      );
+    }
+  }
 });
 
 client.login(TOKEN);

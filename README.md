@@ -39,10 +39,6 @@ Thank you for your hard work and dedication to Ultimate Rewards! 🫡
 Keep up the great work! 🚀
 ```
 
-### `$check email:pass`
-Basic format check only (staff).  
-Does **not** perform live Microsoft login tests (not supported for security & ToS reasons).
-
 ## Discord setup
 1. https://discord.com/developers/applications → New Application → Bot
 2. Enable intents:

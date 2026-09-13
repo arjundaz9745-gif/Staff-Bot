@@ -305,8 +305,7 @@ client.on('messageCreate', async (message) => {
         '`$mcfa list` — paste all as ||mail:pass||\n' +
         '`$mcfa add mail:pass` — add stock\n' +
         '`$pay @user` — DM one MCFA to user\n' +
-        '`$salary @user` — DM staff salary reward (restricted)\n' +
-        '`$check email:pass` — format check only'
+        '`$salary @user` — DM staff salary reward (restricted)'
     );
   }
 
@@ -414,37 +413,6 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // ========== $check email:pass ==========
-  // Format-only check (no live Microsoft login attempts)
-  if (cmd === 'check') {
-    if (!isStaff(message.member)) return message.reply('Staff only.');
-
-    const rest = body.slice(body.toLowerCase().indexOf('check') + 5).trim();
-    const accounts = parseAccounts(rest);
-
-    if (!accounts.length) {
-      return message.reply(
-        'Usage: `$check email:pass`\n' +
-          'Checks basic format only. Live Microsoft login checking is **not** supported.'
-      );
-    }
-
-    const results = accounts.map((a) => {
-      const [mail, pass] = a.split(/:(.+)/);
-      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail || '');
-      const passOk = (pass || '').length >= 1;
-      if (emailOk && passOk) {
-        return `✅ \`${mail}\` — format looks valid`;
-      }
-      return `❌ \`${a}\` — invalid format (need email:pass)`;
-    });
-
-    return message.reply(
-      `**Format check** (no live Microsoft login):\n` +
-        results.join('\n') +
-        `\n\n⚠️ Real login testing against Microsoft.com is not available for security & ToS reasons.`
-    );
-  }
 });
 
 client.login(TOKEN);

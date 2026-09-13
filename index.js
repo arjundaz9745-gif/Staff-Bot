@@ -548,20 +548,88 @@ client.on('messageCreate', async (message) => {
         '`$custom list` — paste all as spoilers\n' +
         '`$custom add <text>` — add item(s)\n' +
         '`$custom clear` — clear custom stock\n' +
-        '`$custompay @user` — DM one custom item to user'
+        '`$custompay @user` — DM 1 item to one user\n' +
+        '`$custompay @role` — DM 1 item to every member in the role'
     );
   }
 
-  // ========== $custompay @user ==========
+  // ========== $custompay @user  OR  $custompay @role ==========
+  // If a role is given → sends 1 item to EVERY member in that role
   if (cmd === 'custompay') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
 
-    const user =
-      message.mentions.users.first() ||
-      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
+    // Prefer role if mentioned, otherwise try user
+    const role =
+      message.mentions.roles.first() ||
+      message.guild.roles.cache.get((args[0] || '').replace(/[<@&>]/g, ''));
 
+    const user =
+      !role
+        ? message.mentions.users.first() ||
+          (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)))
+        : null;
+
+    // ---------- ROLE MODE ----------
+    if (role) {
+      try {
+        await message.guild.members.fetch();
+      } catch (_) {}
+
+      const targets = message.guild.members.cache.filter(
+        (m) => !m.user.bot && m.roles.cache.has(role.id)
+      );
+
+      if (!targets.size) {
+        return message.reply(`No members found with role **${role.name}**.`);
+      }
+
+      if (data.customStock.length < targets.size) {
+        return message.reply(
+          `Not enough custom stock. Need **${targets.size}** items, only **${data.customStock.length}** left.`
+        );
+      }
+
+      let sent = 0;
+      let failed = 0;
+
+      for (const [, member] of targets) {
+        const item = data.customStock.shift();
+        data.customUsed.push({
+          item,
+          to: member.id,
+          by: message.author.id,
+          at: new Date().toISOString(),
+          role: role.id
+        });
+
+        try {
+          await member.send(
+            `**Custom delivery**\n` +
+              `Here is your item (click to reveal):\n||${item}||\n\n` +
+              `Delivered by staff.`
+          );
+          sent++;
+        } catch (e) {
+          // put item back if DM failed
+          data.customStock.unshift(item);
+          data.customUsed.pop();
+          failed++;
+        }
+      }
+
+      saveData();
+      return message.reply(
+        `Role **@${role.name}**: sent to **${sent}** members` +
+          (failed ? ` · **${failed}** failed (DMs closed)` : '') +
+          ` · Stock left: **${data.customStock.length}**`
+      );
+    }
+
+    // ---------- USER MODE ----------
     if (!user || user.bot) {
-      return message.reply('Usage: `$custompay @user` — sends 1 custom item to their DM');
+      return message.reply(
+        'Usage:\n`$custompay @user` — send 1 item to one user\n`$custompay @role` — send 1 item to every member in the role'
+      );
     }
 
     if (!data.customStock.length) {
@@ -621,7 +689,8 @@ client.on('messageCreate', async (message) => {
           '`$custom list` — show all custom items',
           '`$custom add <text>` — add custom item(s)',
           '`$custom clear` — clear custom stock',
-          '`$custompay @user` — DM 1 custom item',
+          '`$custompay @user` — DM 1 item to one user',
+          '`$custompay @role` — DM 1 item to every member in the role',
           '',
           '**Other**',
           '`$online @role` — show online members in a role',

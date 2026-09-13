@@ -1,0 +1,16 @@
+{
+  "name": "best-bot",
+  "version": "1.0.0",
+  "description": "Discord bot: $best @role — messages + invites leaderboard",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

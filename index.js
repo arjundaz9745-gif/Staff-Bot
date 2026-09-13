@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -10,8 +11,9 @@ const {
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
-const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || ''; // optional extra staff role
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || '';
 const PREFIX = process.env.PREFIX || '$';
+const PORT = process.env.PORT || 3000;
 const DATA_PATH = process.env.RENDER
   ? path.join('/tmp', 'best-bot-data.json')
   : path.join(__dirname, 'data.json');
@@ -20,6 +22,14 @@ if (!TOKEN) {
   console.error('Missing DISCORD_BOT_TOKEN');
   process.exit(1);
 }
+
+// Keep Render Web Service alive (must bind a port)
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Best bot is online');
+  })
+  .listen(PORT, '0.0.0.0', () => console.log(`HTTP health server on port ${PORT}`));
 
 function loadData() {
   try {
@@ -58,28 +68,14 @@ function isStaff(member) {
   if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true;
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
   if (STAFF_ROLE_ID && member.roles.cache.has(STAFF_ROLE_ID)) return true;
-  // common staff-ish perms
   if (member.permissions.has(PermissionFlagsBits.ModerateMembers)) return true;
   if (member.permissions.has(PermissionFlagsBits.ManageMessages)) return true;
   return false;
 }
 
-function scoreOf(userId, guildId) {
-  const m = data.messages[guildId]?.[userId] || 0;
-  const inv = data.invites[guildId]?.[userId] || 0;
-  // Combined: 1 message = 1 pt, 1 invite = 25 pts (invites are rarer)
-  return m + inv * 25;
-}
-
 function addMessage(guildId, userId) {
   if (!data.messages[guildId]) data.messages[guildId] = {};
   data.messages[guildId][userId] = (data.messages[guildId][userId] || 0) + 1;
-  saveData(data);
-}
-
-function setInviteCount(guildId, userId, count) {
-  if (!data.invites[guildId]) data.invites[guildId] = {};
-  data.invites[guildId][userId] = count;
   saveData(data);
 }
 
@@ -95,18 +91,20 @@ async function cacheGuildInvites(guild) {
     });
     saveData(data);
   } catch (e) {
-    console.error('Invite cache failed for', guild.id, e.message);
+    console.error('Invite cache failed:', e.message);
   }
 }
 
-client.once('ready', async () => {
+async function onReady() {
   console.log(`Logged in as ${client.user.tag}`);
   for (const [, guild] of client.guilds.cache) {
     await cacheGuildInvites(guild);
   }
-  // periodic save safety
   setInterval(() => saveData(data), 60_000);
-});
+}
+
+client.once('ready', onReady);
+client.once('clientReady', onReady);
 
 client.on('inviteCreate', async (invite) => {
   try {
@@ -125,15 +123,10 @@ client.on('guildMemberAdd', async (member) => {
     const invites = await guild.invites.fetch();
     const previous = data.inviteUses[guild.id] || {};
     let used = null;
-
     invites.forEach((inv) => {
       const before = previous[inv.code]?.uses || 0;
-      if ((inv.uses || 0) > before) {
-        used = inv;
-      }
+      if ((inv.uses || 0) > before) used = inv;
     });
-
-    // refresh cache
     data.inviteUses[guild.id] = {};
     invites.forEach((inv) => {
       data.inviteUses[guild.id][inv.code] = {
@@ -141,7 +134,6 @@ client.on('guildMemberAdd', async (member) => {
         inviterId: inv.inviter?.id || null
       };
     });
-
     if (used && used.inviter) {
       const gid = guild.id;
       const uid = used.inviter.id;
@@ -157,31 +149,28 @@ client.on('guildMemberAdd', async (member) => {
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
-  // count messages for stats
   addMessage(message.guild.id, message.author.id);
 
   if (!message.content.startsWith(PREFIX)) return;
 
   const body = message.content.slice(PREFIX.length).trim();
-  const [cmd, ...rest] = body.split(/\s+/);
-  if (!cmd) return;
-
-  if (cmd.toLowerCase() !== 'best') return;
+  const [cmd] = body.split(/\s+/);
+  if (!cmd || cmd.toLowerCase() !== 'best') return;
 
   if (!isStaff(message.member)) {
     return message.reply('Staff only.');
   }
 
-  // Role: mention or ID
   const role =
     message.mentions.roles.first() ||
-    (rest[0] && message.guild.roles.cache.get(rest[0].replace(/[<@&>]/g, '')));
+    message.guild.roles.cache.get(
+      (body.split(/\s+/)[1] || '').replace(/[<@&>]/g, '')
+    );
 
   if (!role) {
     return message.reply('Usage: `$best @role`\nExample: `$best @Members`');
   }
 
-  // Ensure members cached
   try {
     await message.guild.members.fetch();
   } catch (_) {}

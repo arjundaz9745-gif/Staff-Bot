@@ -11,7 +11,9 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType
+  ComponentType,
+  ChannelType,
+  PermissionsBitField
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -27,6 +29,7 @@ const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356';
 
 // Anti-raid settings
 const ANTIRAID_LOG_CHANNEL_ID = process.env.ANTIRAID_LOG_CHANNEL_ID || ''; // optional log channel
+const TEAMUP_CATEGORY_ID = process.env.TEAMUP_CATEGORY_ID || ''; // optional category for teamup tickets
 const MASS_PING_LIMIT = 3;          // same user mentioned this many times
 const MASS_PING_WINDOW_MS = 15000;  // within 15 seconds
 const MASS_PING_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
@@ -1099,6 +1102,195 @@ client.on('messageCreate', async (message) => {
     );
   }
 
+
+  // ========== $team <game> ... ==========
+  // LFG announcement for supported games
+  if (cmd === 'team') {
+    const gameRaw = (args[0] || '').toLowerCase();
+    const rest = args.slice(1);
+
+    const games = {
+      minecraft: { name: 'Minecraft', emoji: '⛏️', timeMax: 5 },
+      pubg: { name: 'PUBG', emoji: '🔫', timeMax: 5 },
+      bgmi: { name: 'BGMI', emoji: '📱', timeMax: 5 },
+      freefire: { name: 'Free Fire', emoji: '🔥', timeMax: 5 },
+      'free-fire': { name: 'Free Fire', emoji: '🔥', timeMax: 5 },
+      ff: { name: 'Free Fire', emoji: '🔥', timeMax: 5 },
+      amongus: { name: 'Among Us', emoji: '🚀', timeMax: 10 },
+      'among-us': { name: 'Among Us', emoji: '🚀', timeMax: 10 },
+      au: { name: 'Among Us', emoji: '🚀', timeMax: 10 }
+    };
+
+    // normalize "among us" / "free fire"
+    let gameKey = gameRaw;
+    if (gameRaw === 'among' && (args[1] || '').toLowerCase() === 'us') {
+      gameKey = 'amongus';
+      rest.shift();
+    } else if (gameRaw === 'free' && (args[1] || '').toLowerCase() === 'fire') {
+      gameKey = 'freefire';
+      rest.shift();
+    }
+
+    const game = games[gameKey];
+    if (!game) {
+      return message.reply(
+        '**Supported games:**\n' +
+        '`$team minecraft <ip:port> <1-5min>`\n' +
+        '`$team pubg <in-game id> <1-5min>`\n' +
+        '`$team bgmi <in-game id> <1-5min>`\n' +
+        '`$team freefire <in-game id> <1-5min>`\n' +
+        '`$team amongus <lobby code> <1-10min>`'
+      );
+    }
+
+    if (rest.length < 2) {
+      return message.reply(`Usage: \`$team ${gameKey} <info> <time>\``);
+    }
+
+    const timeStr = rest[rest.length - 1].toLowerCase().replace(/min(ute)?s?/, '');
+    const time = parseInt(timeStr, 10);
+    const info = rest.slice(0, -1).join(' ');
+
+    if (!time || time < 1 || time > game.timeMax) {
+      return message.reply(`Time must be between **1-${game.timeMax} minutes**.`);
+    }
+    if (!info) {
+      return message.reply(`Please provide the required info for **${game.name}**.`);
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle(`${game.emoji} Looking for Team — ${game.name}`)
+      .addFields(
+        { name: 'Player', value: message.author.username, inline: true },
+        { name: 'Info', value: `\`${info}\``, inline: true },
+        { name: 'Duration', value: `**${time} min**`, inline: true }
+      )
+      .setFooter({ text: 'Ultimate Rewards • Team Finder' })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+  }
+
+  // ========== $teamup @user(s) ==========
+  // Creates a private temporary channel for the group (max 20)
+  if (cmd === 'teamup') {
+    const targets = [...message.mentions.users.values()].filter((u) => !u.bot && u.id !== message.author.id);
+
+    if (!targets.length) {
+      return message.reply('Usage: `$teamup @user1 @user2 ...` (mention who you want to play with)');
+    }
+    if (targets.length > 19) {
+      return message.reply('Max **20** people total (you + 19 others).');
+    }
+
+    // Check bot permissions
+    if (!message.guild.members.me?.permissions.has([PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ViewChannel])) {
+      return message.reply('I need **Manage Channels** permission to create teamup tickets.');
+    }
+
+    const memberIds = [message.author.id, ...targets.map((u) => u.id)];
+    const channelName = `teamup-${message.author.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 90);
+
+    try {
+      const overwrites = [
+        {
+          id: message.guild.id, // @everyone
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: message.guild.members.me.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ManageChannels,
+            PermissionFlagsBits.ManageMessages
+          ]
+        }
+      ];
+
+      for (const id of memberIds) {
+        overwrites.push({
+          id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+        });
+      }
+
+      // Also allow staff roles to see (optional but useful)
+      for (const roleId of [OWNER_ROLE_ID, CO_OWNER_ROLE_ID, HEAD_ADMIN_ROLE_ID, ADMIN_ROLE_ID]) {
+        if (roleId && message.guild.roles.cache.has(roleId)) {
+          overwrites.push({
+            id: roleId,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+          });
+        }
+      }
+
+      const createOpts = {
+        name: channelName,
+        type: ChannelType.GuildText,
+        permissionOverwrites: overwrites,
+        topic: `TeamUp by ${message.author.username} | $close to close | $leave to leave`,
+        reason: `TeamUp created by ${message.author.tag}`
+      };
+      if (TEAMUP_CATEGORY_ID) createOpts.parent = TEAMUP_CATEGORY_ID;
+
+      const ch = await message.guild.channels.create(createOpts);
+
+      const mentionList = memberIds.map((id) => `<@${id}>`).join(' ');
+      const welcome = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('🎮 TeamUp Channel')
+        .setDescription(
+          `Private channel for **${message.author.username}** and friends.\n\n` +
+          `**Members:** ${mentionList}\n\n` +
+          `**Commands (in this channel):**\n` +
+          `\`$close\` — close & delete this ticket (creator or staff)\n` +
+          `\`$leave\` — leave this TeamUp`
+        )
+        .setFooter({ text: 'Ultimate Rewards • TeamUp' })
+        .setTimestamp();
+
+      await ch.send({ content: mentionList, embeds: [welcome] });
+      return message.reply(`✅ TeamUp created: ${ch}`);
+    } catch (e) {
+      console.error('teamup error:', e.message);
+      return message.reply('Failed to create TeamUp channel. Check my permissions.');
+    }
+  }
+
+  // ========== $close / $leave (inside TeamUp channels) ==========
+  if (cmd === 'close' || cmd === 'leave') {
+    const ch = message.channel;
+    if (!ch.name?.startsWith('teamup-')) {
+      return message.reply('This command only works inside a **TeamUp** channel.');
+    }
+
+    if (cmd === 'leave') {
+      // Remove the user from the channel
+      try {
+        await ch.permissionOverwrites.edit(message.author.id, { ViewChannel: false });
+        await message.reply(`👋 **${message.author.username}** left the TeamUp.`);
+        // If only bot + staff left, optionally do nothing
+      } catch (e) {
+        return message.reply('Could not remove you from this channel.');
+      }
+      return;
+    }
+
+    // $close — only creator (channel name contains their username) or staff
+    const isCreator = ch.name.includes(message.author.username.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    if (!isCreator && !isStaff(message.member)) {
+      return message.reply('Only the **creator** or **staff** can close this TeamUp.');
+    }
+
+    await message.reply('🔒 Closing TeamUp in 3 seconds...');
+    setTimeout(() => {
+      ch.delete('TeamUp closed').catch(() => {});
+    }, 3000);
+    return;
+  }
+
   // ========== $staffstats ==========
   if (cmd === 'staffstats') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
@@ -1245,6 +1437,11 @@ client.on('messageCreate', async (message) => {
           '`$count status` — counting status',
           '`$count reset` — reset count to 0',
           '`$count off` — disable counting',
+          '',
+          '**Team Finder**',
+          '`$team <game> <info> <time>` — LFG post',
+          '`$teamup @user(s)` — create private TeamUp channel',
+          '`$close` / `$leave` — inside TeamUp channels',
           '',
           '**Ultimate Economy**',
           '`$ultimate` — show your coins',

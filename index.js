@@ -24,6 +24,13 @@ const OWNER_ROLE_ID = process.env.OWNER_ROLE_ID || '1547183159794204675';
 const CO_OWNER_ROLE_ID = process.env.CO_OWNER_ROLE_ID || '1547183161300090950';
 const HEAD_ADMIN_ROLE_ID = process.env.HEAD_ADMIN_ROLE_ID || '1547183162457718847';
 const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356';
+
+// Anti-raid settings
+const ANTIRAID_LOG_CHANNEL_ID = process.env.ANTIRAID_LOG_CHANNEL_ID || ''; // optional log channel
+const MASS_PING_LIMIT = 3;          // same user mentioned this many times
+const MASS_PING_WINDOW_MS = 15000;  // within 15 seconds
+const MASS_PING_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 const DATA_PATH = process.env.RENDER
   ? path.join('/tmp', 'best-bot-data.json')
   : path.join(__dirname, 'data.json');
@@ -53,6 +60,7 @@ function loadData() {
       if (!Array.isArray(d.customUsed)) d.customUsed = [];
       if (!d.coins) d.coins = {};
       if (!d.daily) d.daily = {};
+      if (!d.counting) d.counting = {}; // { channelId: { current: number, lastUserId: string } }
       return d;
     }
   } catch (e) {
@@ -67,7 +75,8 @@ function loadData() {
     customStock: [],
     customUsed: [],
     coins: {},
-    daily: {}
+    daily: {},
+    counting: {}
   };
 }
 
@@ -80,6 +89,11 @@ function saveData() {
 }
 
 let data = loadData();
+
+// In-memory anti-raid trackers (reset on restart – fine for short windows)
+const recentMentions = new Map(); // key: `${authorId}:${targetId}` → timestamps[]
+const recentChannelRenames = new Map(); // key: userId → timestamps[]
+
 
 const client = new Client({
   intents: [
@@ -222,6 +236,110 @@ client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
   addMessage(message.guild.id, message.author.id);
+
+  // ========== LEGIT REACTION ==========
+  // If message contains the word "legit" → react with ✅
+  try {
+    if (/\blegit\b/i.test(message.content)) {
+      await message.react('✅').catch(() => {});
+    }
+  } catch (_) {}
+
+  // ========== ANTI MASS-PING ==========
+  // If the same user is mentioned 3+ times quickly by one person → 3 day timeout
+  try {
+    if (message.mentions.users.size > 0 && message.member && message.guild.members.me?.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      const now = Date.now();
+      for (const [targetId] of message.mentions.users) {
+        if (targetId === message.author.id) continue; // ignore self-pings
+
+        // Never punish for pinging someone who has the Owner role
+        const targetMember = message.guild.members.cache.get(targetId) ||
+          await message.guild.members.fetch(targetId).catch(() => null);
+        if (targetMember && OWNER_ROLE_ID && targetMember.roles.cache.has(OWNER_ROLE_ID)) {
+          continue;
+        }
+
+        const key = `${message.author.id}:${targetId}`;
+        let times = recentMentions.get(key) || [];
+        times = times.filter((t) => now - t < MASS_PING_WINDOW_MS);
+        times.push(now);
+        recentMentions.set(key, times);
+
+        if (times.length >= MASS_PING_LIMIT) {
+          recentMentions.delete(key);
+          // Apply 3-day timeout
+          await message.member.timeout(MASS_PING_TIMEOUT_MS, `Anti-raid: mass pinged the same user ${MASS_PING_LIMIT}+ times`);
+          await message.reply(
+            `⏱️ **${message.author.username}** has been timed out for **3 days** for mass-pinging.`
+          ).catch(() => {});
+
+          // Optional log
+          if (ANTIRAID_LOG_CHANNEL_ID) {
+            const logCh = message.guild.channels.cache.get(ANTIRAID_LOG_CHANNEL_ID);
+            if (logCh) {
+              const embed = new EmbedBuilder()
+                .setColor(0xed4245)
+                .setTitle('🛡️ Anti-Raid — Mass Ping')
+                .setDescription(
+                  `**User:** ${message.author.tag} (\`${message.author.id}\`)
+` +
+                  `**Target:** <@${targetId}>
+` +
+                  `**Action:** Timed out for 3 days
+` +
+                  `**Channel:** ${message.channel}`
+                )
+                .setTimestamp();
+              logCh.send({ embeds: [embed] }).catch(() => {});
+            }
+          }
+          break;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Mass-ping protection error:', e.message);
+  }
+
+  // ========== COUNTING CHANNEL ==========
+  try {
+    const countData = data.counting[message.channel.id];
+    if (countData && !message.content.startsWith(PREFIX)) {
+      const content = message.content.trim();
+      // Only pure numbers count
+      if (/^\d+$/.test(content)) {
+        const num = parseInt(content, 10);
+        const expected = (countData.current || 0) + 1;
+
+        if (message.author.id === countData.lastUserId) {
+          await message.react('❌').catch(() => {});
+          await message.reply(
+            `❌ **${message.author.username}** — you can't count twice in a row! Next number is **${expected}**.`
+          ).catch(() => {});
+        } else if (num !== expected) {
+          await message.react('❌').catch(() => {});
+          await message.reply(
+            `❌ Wrong number! Expected **${expected}**. Count reset to **0**.`
+          ).catch(() => {});
+          data.counting[message.channel.id] = { current: 0, lastUserId: null };
+          saveData();
+        } else {
+          // Correct
+          data.counting[message.channel.id] = {
+            current: num,
+            lastUserId: message.author.id
+          };
+          saveData();
+          await message.react('✅').catch(() => {});
+        }
+      }
+      // Non-number messages in counting channel are ignored (or you can delete them later)
+      return; // don't process as command
+    }
+  } catch (e) {
+    console.error('Counting error:', e.message);
+  }
 
   if (!message.content.startsWith(PREFIX)) return;
 
@@ -909,6 +1027,78 @@ client.on('messageCreate', async (message) => {
     return message.reply({ embeds: [embed] });
   }
 
+  // ========== $count #channel ==========
+  // Staff only — enable / disable / status counting in a channel
+  if (cmd === 'count') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+
+    const sub = (args[0] || '').toLowerCase();
+    const channel =
+      message.mentions.channels.first() ||
+      message.guild.channels.cache.get((args[0] || '').replace(/[<#>]/g, '')) ||
+      (sub && !['status', 'off', 'stop', 'disable', 'reset'].includes(sub)
+        ? message.guild.channels.cache.get(sub.replace(/[<#>]/g, ''))
+        : null) ||
+      message.channel;
+
+    // $count status / $count  (current channel)
+    if (!sub || sub === 'status' || sub === 'info') {
+      const info = data.counting[channel.id];
+      if (!info) {
+        return message.reply(`Counting is **not active** in ${channel}.\nEnable with \`$count ${channel}\``);
+      }
+      return message.reply(
+        `**Counting in ${channel}**\n` +
+        `Current number: **${info.current || 0}**\n` +
+        `Last counter: ${info.lastUserId ? `<@${info.lastUserId}>` : '—'}\n` +
+        `Next number: **${(info.current || 0) + 1}**`
+      );
+    }
+
+    // $count off / stop / disable
+    if (['off', 'stop', 'disable'].includes(sub)) {
+      const target =
+        message.mentions.channels.first() ||
+        message.guild.channels.cache.get((args[1] || '').replace(/[<#>]/g, '')) ||
+        message.channel;
+      if (data.counting[target.id]) {
+        delete data.counting[target.id];
+        saveData();
+        return message.reply(`Counting **disabled** in ${target}.`);
+      }
+      return message.reply(`Counting was not active in ${target}.`);
+    }
+
+    // $count reset
+    if (sub === 'reset') {
+      const target =
+        message.mentions.channels.first() ||
+        message.guild.channels.cache.get((args[1] || '').replace(/[<#>]/g, '')) ||
+        message.channel;
+      if (!data.counting[target.id]) {
+        return message.reply(`Counting is not active in ${target}.`);
+      }
+      data.counting[target.id] = { current: 0, lastUserId: null };
+      saveData();
+      return message.reply(`Counting **reset to 0** in ${target}. Next number is **1**.`);
+    }
+
+    // $count #channel  → enable
+    if (channel.type !== 0 && channel.type !== 5) { // GuildText or GuildAnnouncement
+      return message.reply('Please mention a text channel.');
+    }
+
+    data.counting[channel.id] = { current: 0, lastUserId: null };
+    saveData();
+    return message.reply(
+      `✅ Counting **enabled** in ${channel}.\n` +
+      `Rules:\n` +
+      `• Count in order: 1, 2, 3, …\n` +
+      `• Same person cannot count twice in a row\n` +
+      `• Wrong number = reset to 0`
+    );
+  }
+
   // ========== $staffstats ==========
   if (cmd === 'staffstats') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
@@ -1051,6 +1241,10 @@ client.on('messageCreate', async (message) => {
           '**Staff Management**',
           '`$staffstats` — premium staff team overview',
           '`$online @role` — show online members in a role',
+          '`$count #channel` — enable counting game',
+          '`$count status` — counting status',
+          '`$count reset` — reset count to 0',
+          '`$count off` — disable counting',
           '',
           '**Ultimate Economy**',
           '`$ultimate` — show your coins',
@@ -1073,4 +1267,77 @@ client.on('messageCreate', async (message) => {
 
 });
 
+// ========== ANTI-RAID: Channel / Category rename protection ==========
+const RAID_NAME_PATTERNS = [
+  /raided/i,
+  /this server was raided/i,
+  /nigg/i,
+  /fuck\s*you/i,
+  /get\s*fucked/i,
+  /@everyone/i,
+  /discord\.gg\//i
+];
+
+client.on('channelUpdate', async (oldChannel, newChannel) => {
+  try {
+    if (!newChannel.guild) return;
+    if (oldChannel.name === newChannel.name) return;
+
+    const audit = await newChannel.guild.fetchAuditLogs({
+      type: 11, // CHANNEL_UPDATE
+      limit: 1
+    }).catch(() => null);
+
+    const entry = audit?.entries?.first();
+    const executor = entry?.executor;
+    if (!executor || executor.bot) return;
+    if (entry && Date.now() - entry.createdTimestamp > 10000) return; // too old
+
+    const newName = newChannel.name || '';
+    const isSuspicious = RAID_NAME_PATTERNS.some((re) => re.test(newName));
+
+    // Also flag very rapid renames by same user
+    const now = Date.now();
+    const key = executor.id;
+    let times = recentChannelRenames.get(key) || [];
+    times = times.filter((t) => now - t < 30000); // 30s window
+    times.push(now);
+    recentChannelRenames.set(key, times);
+    const rapidRename = times.length >= 4;
+
+    if (!isSuspicious && !rapidRename) return;
+
+    // Revert the name
+    await newChannel.setName(oldChannel.name, 'Anti-raid: suspicious rename').catch(() => {});
+
+    // Timeout the executor (3 days) if possible
+    const member = await newChannel.guild.members.fetch(executor.id).catch(() => null);
+    if (member && newChannel.guild.members.me?.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      await member.timeout(MASS_PING_TIMEOUT_MS, 'Anti-raid: suspicious channel rename').catch(() => {});
+    }
+
+    // Log
+    if (ANTIRAID_LOG_CHANNEL_ID) {
+      const logCh = newChannel.guild.channels.cache.get(ANTIRAID_LOG_CHANNEL_ID);
+      if (logCh) {
+        const embed = new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle('🛡️ Anti-Raid — Channel Rename Blocked')
+          .setDescription(
+            `**User:** ${executor.tag} (\`${executor.id}\`)\n` +
+            `**Channel:** ${newChannel}\n` +
+            `**Old name:** \`${oldChannel.name}\`\n` +
+            `**Tried to set:** \`${newName}\`\n` +
+            `**Action:** Name reverted` + (member ? ' + 3 day timeout' : '')
+          )
+          .setTimestamp();
+        logCh.send({ embeds: [embed] }).catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.error('channelUpdate anti-raid error:', e.message);
+  }
+});
+
 client.login(TOKEN);
+

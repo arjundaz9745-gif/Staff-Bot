@@ -51,6 +51,8 @@ function loadData() {
       if (!Array.isArray(d.mcfaUsed)) d.mcfaUsed = [];
       if (!Array.isArray(d.customStock)) d.customStock = [];
       if (!Array.isArray(d.customUsed)) d.customUsed = [];
+      if (!d.coins) d.coins = {};
+      if (!d.daily) d.daily = {};
       return d;
     }
   } catch (e) {
@@ -63,7 +65,9 @@ function loadData() {
     mcfaStock: [],
     mcfaUsed: [],
     customStock: [],
-    customUsed: []
+    customUsed: [],
+    coins: {},
+    daily: {}
   };
 }
 
@@ -98,6 +102,26 @@ function isStaff(member) {
   if (member.permissions.has(PermissionFlagsBits.ModerateMembers)) return true;
   if (member.permissions.has(PermissionFlagsBits.ManageMessages)) return true;
   return false;
+}
+
+function isCoOwnerOrAbove(member) {
+  if (!member) return false;
+  if (OWNER_ROLE_ID && member.roles.cache.has(OWNER_ROLE_ID)) return true;
+  if (CO_OWNER_ROLE_ID && member.roles.cache.has(CO_OWNER_ROLE_ID)) return true;
+  return false;
+}
+
+function getCoins(userId) {
+  return data.coins[userId] || 0;
+}
+
+function setCoins(userId, amount) {
+  data.coins[userId] = Math.max(0, Math.floor(amount));
+  saveData();
+}
+
+function addCoins(userId, amount) {
+  setCoins(userId, getCoins(userId) + amount);
 }
 
 function parseAccounts(text) {
@@ -674,6 +698,217 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+
+  // ========== $ultimate (economy) ==========
+  // $ultimate                 → show your balance
+  // $ultimate @user           → show someone's balance
+  // $ultimate add <amt> [@user] → add coins (Owner/Co-Owner)
+  // $ultimate give/send @user <amt> → transfer coins
+  // $ultimate cf <amt> <head|tail> → coin flip
+  // $ultimate daily           → claim daily reward
+  // $ultimate top             → richest users
+  if (cmd === 'ultimate') {
+    const sub = (args[0] || '').toLowerCase();
+
+    // ---- $ultimate add <amount> [@user] ----
+    if (sub === 'add') {
+      if (!isCoOwnerOrAbove(message.member)) {
+        return message.reply('Only **Owner** and **Co-Owner** can add coins.');
+      }
+      const amount = parseInt(args[1], 10);
+      if (!amount || amount < 1) {
+        return message.reply('Usage: `$ultimate add <amount> [@user]`');
+      }
+      let target = message.mentions.users.first();
+      if (!target && args[2]) {
+        target = await client.users.fetch(args[2].replace(/[<@!>]/g, '')).catch(() => null);
+      }
+      if (!target) target = message.author;
+      if (target.bot) return message.reply('Cannot add coins to bots.');
+
+      addCoins(target.id, amount);
+      const embed = new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('💰 Coins Added')
+        .setDescription(
+          `Added **${amount.toLocaleString()}** coins to **${target.username}**\n` +
+          `New balance: **${getCoins(target.id).toLocaleString()}** 🪙`
+        )
+        .setFooter({ text: 'Ultimate Rewards' })
+        .setTimestamp();
+      return message.reply({ embeds: [embed] });
+    }
+
+    // ---- $ultimate give / send @user <amount> ----
+    if (sub === 'give' || sub === 'send') {
+      const target =
+        message.mentions.users.first() ||
+        (args[1] && (await client.users.fetch(args[1].replace(/[<@!>]/g, '')).catch(() => null)));
+
+      // amount can be args[1] or args[2] depending on whether mention is used
+      let amount = parseInt(args[1], 10);
+      if (message.mentions.users.first()) {
+        amount = parseInt(args[1], 10); // $ultimate give @user 100  → args = ['give', '100'] after shift? 
+        // actually after cmd shift, args[0]=give, args[1]=maybe id or amount
+      }
+      // Better parse: find the number in remaining args
+      const numArg = args.find((a) => /^\d+$/.test(a));
+      amount = numArg ? parseInt(numArg, 10) : NaN;
+
+      if (!target || target.bot) {
+        return message.reply('Usage: `$ultimate give @user <amount>`');
+      }
+      if (!amount || amount < 1) {
+        return message.reply('Usage: `$ultimate give @user <amount>`');
+      }
+      if (target.id === message.author.id) {
+        return message.reply("You can't give coins to yourself.");
+      }
+
+      const bal = getCoins(message.author.id);
+      if (amount > bal) {
+        return message.reply(`You only have **${bal.toLocaleString()}** coins.`);
+      }
+
+      addCoins(message.author.id, -amount);
+      addCoins(target.id, amount);
+
+      const embed = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('💸 Coins Sent')
+        .setDescription(
+          `**${message.author.username}** gave **${amount.toLocaleString()}** coins to **${target.username}**\n\n` +
+          `Your new balance: **${getCoins(message.author.id).toLocaleString()}** 🪙`
+        )
+        .setFooter({ text: 'Ultimate Rewards' })
+        .setTimestamp();
+      return message.reply({ embeds: [embed] });
+    }
+
+    // ---- $ultimate cf <amount> <head|tail> ----
+    if (sub === 'cf' || sub === 'coinflip') {
+      const amount = parseInt(args[1], 10);
+      const choice = (args[2] || '').toLowerCase();
+
+      if (!amount || amount < 1) {
+        return message.reply('Usage: `$ultimate cf <amount> <head|tail>`');
+      }
+      if (!['head', 'heads', 'h', 'tail', 'tails', 't'].includes(choice)) {
+        return message.reply('Choose **head** or **tail**.\nExample: `$ultimate cf 100 head`');
+      }
+
+      const bal = getCoins(message.author.id);
+      if (amount > bal) {
+        return message.reply(`You only have **${bal.toLocaleString()}** coins.`);
+      }
+
+      const normalized = ['head', 'heads', 'h'].includes(choice) ? 'head' : 'tail';
+      const result = Math.random() < 0.5 ? 'head' : 'tail';
+      const won = normalized === result;
+
+      if (won) addCoins(message.author.id, amount);
+      else addCoins(message.author.id, -amount);
+
+      const embed = new EmbedBuilder()
+        .setColor(won ? 0x57f287 : 0xed4245)
+        .setTitle(won ? '🎉 You won!' : '💀 You lost...')
+        .setDescription(
+          `You chose **${normalized}**\n` +
+          `The coin landed on **${result}**\n\n` +
+          (won
+            ? `You won **${amount.toLocaleString()}** coins!`
+            : `You lost **${amount.toLocaleString()}** coins.`) +
+          `\n\nNew balance: **${getCoins(message.author.id).toLocaleString()}** 🪙`
+        )
+        .setFooter({ text: 'Ultimate Rewards • Coin Flip' })
+        .setTimestamp();
+      return message.reply({ embeds: [embed] });
+    }
+
+    // ---- $ultimate daily ----
+    if (sub === 'daily') {
+      const uid = message.author.id;
+      const now = Date.now();
+      const last = data.daily[uid] || 0;
+      const cooldown = 24 * 60 * 60 * 1000; // 24h
+
+      if (now - last < cooldown) {
+        const left = cooldown - (now - last);
+        const h = Math.floor(left / 3600000);
+        const m = Math.floor((left % 3600000) / 60000);
+        return message.reply(`Daily already claimed. Come back in **${h}h ${m}m**.`);
+      }
+
+      const reward = 500 + Math.floor(Math.random() * 501); // 500–1000
+      data.daily[uid] = now;
+      addCoins(uid, reward);
+
+      const embed = new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('🎁 Daily Reward')
+        .setDescription(
+          `You claimed **${reward.toLocaleString()}** coins!\n` +
+          `New balance: **${getCoins(uid).toLocaleString()}** 🪙`
+        )
+        .setFooter({ text: 'Ultimate Rewards • Resets in 24h' })
+        .setTimestamp();
+      return message.reply({ embeds: [embed] });
+    }
+
+    // ---- $ultimate top ----
+    if (sub === 'top' || sub === 'lb' || sub === 'leaderboard') {
+      const entries = Object.entries(data.coins || {})
+        .map(([id, bal]) => ({ id, bal: bal || 0 }))
+        .filter((e) => e.bal > 0)
+        .sort((a, b) => b.bal - a.bal)
+        .slice(0, 10);
+
+      if (!entries.length) {
+        return message.reply('No one has any coins yet.');
+      }
+
+      const lines = [];
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        let name = e.id;
+        try {
+          const u = await client.users.fetch(e.id);
+          name = u.username;
+        } catch (_) {}
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+        lines.push(`${medal} **${name}** — ${e.bal.toLocaleString()} 🪙`);
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('🏆 Ultimate Richest')
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: 'Ultimate Rewards' })
+        .setTimestamp();
+      return message.reply({ embeds: [embed] });
+    }
+
+    // ---- $ultimate  or  $ultimate @user  → show balance ----
+    let target = message.mentions.users.first();
+    if (!target && args[0] && !['add', 'cf', 'coinflip', 'give', 'send', 'daily', 'top', 'lb', 'leaderboard'].includes(sub)) {
+      target = await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null);
+    }
+    if (!target) target = message.author;
+
+    const bal = getCoins(target.id);
+    const embed = new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setTitle('🪙 Ultimate Balance')
+      .setDescription(
+        target.id === message.author.id
+          ? `You have **${bal.toLocaleString()}** coins.`
+          : `**${target.username}** has **${bal.toLocaleString()}** coins.`
+      )
+      .setFooter({ text: 'Ultimate Rewards' })
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
   // ========== $staffstats ==========
   if (cmd === 'staffstats') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
@@ -816,6 +1051,15 @@ client.on('messageCreate', async (message) => {
           '**Staff Management**',
           '`$staffstats` — premium staff team overview',
           '`$online @role` — show online members in a role',
+          '',
+          '**Ultimate Economy**',
+          '`$ultimate` — show your coins',
+          '`$ultimate @user` — show someone\'s coins',
+          '`$ultimate give @user <amt>` — send coins',
+          '`$ultimate daily` — claim daily reward',
+          '`$ultimate cf <amt> <head|tail>` — coin flip',
+          '`$ultimate top` — richest users',
+          '`$ultimate add <amt> [@user]` — add coins (Owner/Co-Owner)',
           '',
           '**Other**',
           '`$help` — this message'

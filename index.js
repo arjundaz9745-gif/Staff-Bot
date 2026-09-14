@@ -28,6 +28,8 @@ const MANAGER_ROLE_ID = process.env.MANAGER_ROLE_ID || '1549036072909021285';
 const HEAD_ADMIN_ROLE_ID = process.env.HEAD_ADMIN_ROLE_ID || '1547183162457718847';
 const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356';
 const STAFF_TEAM_ROLE_ID = process.env.STAFF_TEAM_ROLE_ID || ''; // optional: all staff role
+const REWARD_STAFF_ROLE_ID = process.env.REWARD_STAFF_ROLE_ID || '1548173330794815599'; // online staff to ping for claims
+const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || ''; // optional: auto-prompt in new tickets
 
 // Anti-raid settings
 const ANTIRAID_LOG_CHANNEL_ID = process.env.ANTIRAID_LOG_CHANNEL_ID || ''; // optional log channel
@@ -175,6 +177,138 @@ async function updateTeamupPanel(channel, team) {
     await msg.edit({ embeds: [buildTeamupPanel(team)] });
   } catch (_) {}
 }
+
+
+const REWARD_TIERS = [
+  { id: 1, invites: 2, name: 'MCFA', type: 'reward' },
+  { id: 2, invites: 4, name: 'Xbox Code', type: 'reward' },
+  { id: 3, invites: 5, name: 'MCFA — Hypixel Unbanned', type: 'reward' },
+  { id: 4, invites: 8, name: 'Netflix Premium — PC Login', type: 'reward' },
+  { id: 5, invites: 10, name: 'Crunchyroll Premium', type: 'reward' },
+  { id: 6, invites: 2, name: 'MC Redeem Code Method', type: 'method' },
+  { id: 7, invites: 4, name: 'Nitro Basic Yearly Method', type: 'method' },
+  { id: 8, invites: 5, name: 'MCFA Email Change Method', type: 'method' },
+  { id: 9, invites: 8, name: 'MCFA Password Change Method', type: 'method' },
+  { id: 10, invites: 12, name: '5,000 Robux Method', type: 'method' }
+];
+
+function getUserInvites(guildId, userId) {
+  return data.invites[guildId]?.[userId] || 0;
+}
+
+function getEligibleRewards(inviteCount) {
+  return REWARD_TIERS.filter((r) => inviteCount >= r.invites);
+}
+
+function buildRewardMenuEmbed(user, inviteCount, eligible) {
+  const rewardLines = eligible
+    .filter((r) => r.type === 'reward')
+    .map((r) => `\`${r.id}.\` **${r.invites} Invites** → **${r.name}**`);
+  const methodLines = eligible
+    .filter((r) => r.type === 'method')
+    .map((r) => `\`${r.id}.\` **${r.invites} Invites** → **${r.name}**`);
+
+  let desc = `**Your invites:** \`${inviteCount}\`\n\n`;
+  if (!eligible.length) {
+    desc += '❌ You need at least **2 invites** to claim a reward.';
+  } else {
+    if (rewardLines.length) {
+      desc += '### 🎁 Reward Tiers\n' + rewardLines.join('\n') + '\n\n';
+    }
+    if (methodLines.length) {
+      desc += '### 🛠️ Method Rewards\n' + methodLines.join('\n') + '\n\n';
+    }
+    desc += '**Reply with the number** of the reward you want (e.g. `3`)';
+  }
+
+  return new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('🎁 Claim Your Reward')
+    .setDescription(desc)
+    .setFooter({ text: 'Ultimate Rewards • Invite Claim' })
+    .setTimestamp();
+}
+
+async function pingOnlineRewardStaff(guild, claimUser, rewardName) {
+  const roleId = REWARD_STAFF_ROLE_ID;
+  if (!roleId) return null;
+  const role = guild.roles.cache.get(roleId);
+  if (!role) return null;
+
+  try {
+    await guild.members.fetch();
+  } catch (_) {}
+
+  const online = role.members.filter(
+    (m) =>
+      !m.user.bot &&
+      m.presence &&
+      ['online', 'idle', 'dnd'].includes(m.presence.status)
+  );
+
+  if (!online.size) {
+    // fallback: mention the role
+    return {
+      content:
+        `<@&${roleId}> ${claimUser} needs **${rewardName}** — please kindly pay them.`,
+      allowedMentions: { roles: [roleId], users: [claimUser.id] }
+    };
+  }
+
+  const pings = [...online.values()].map((m) => `<@${m.id}>`).join(' ');
+  return {
+    content:
+      `${pings}\n${claimUser} needs **${rewardName}** — please kindly pay them.`,
+    allowedMentions: { users: [...online.keys(), claimUser.id] }
+  };
+}
+
+async function startRewardClaimFlow(channel, user) {
+  const invites = getUserInvites(channel.guild.id, user.id);
+  const eligible = getEligibleRewards(invites);
+  const embed = buildRewardMenuEmbed(user, invites, eligible);
+  const menuMsg = await channel.send({ content: `${user}`, embeds: [embed] });
+
+  if (!eligible.length) return;
+
+  const collector = channel.createMessageCollector({
+    filter: (m) => m.author.id === user.id && !m.author.bot,
+    time: 5 * 60 * 1000,
+    max: 10
+  });
+
+  collector.on('collect', async (m) => {
+    const num = parseInt(m.content.trim(), 10);
+    if (!num) {
+      await channel.send(`${user} Please reply with a **number** from the list.`).catch(() => {});
+      return;
+    }
+    const chosen = eligible.find((r) => r.id === num);
+    if (!chosen) {
+      await channel.send(
+        `${user} That option is not available for you. Pick a number from the list above.`
+      ).catch(() => {});
+      return;
+    }
+
+    collector.stop('chosen');
+    const pingPayload = await pingOnlineRewardStaff(channel.guild, user, chosen.name);
+    if (pingPayload) {
+      await channel.send(pingPayload).catch(() => {});
+    } else {
+      await channel.send(
+        `${user} selected **${chosen.name}** — staff will assist shortly.`
+      ).catch(() => {});
+    }
+  });
+
+  collector.on('end', async (_, reason) => {
+    if (reason !== 'chosen') {
+      await channel.send(`${user} Reward selection timed out. Use \`$claim\` to try again.`).catch(() => {});
+    }
+  });
+}
+
 
 function parseAccounts(text) {
   // Accept: mail:pass | mail:pass,mail:pass | one per line | with ||spoilers||
@@ -1348,6 +1482,14 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+
+  // ========== $claim ==========
+  // In a ticket: show eligible rewards based on invites, then ping online staff
+  if (cmd === 'claim') {
+    await startRewardClaimFlow(message.channel, message.author);
+    return;
+  }
+
   // ========== $staffstats ==========
   if (cmd === 'staffstats') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
@@ -1505,7 +1647,8 @@ client.on('messageCreate', async (message) => {
           '`$custompay @role` — DM 1 item to every member in the role',
           '',
           '**Staff Management**',
-          '`$staffstats` — premium staff team overview',
+          '$staffstats` — premium staff team overview',
+          '`$claim` — claim invite reward (in tickets)',
           '`$online @role` — show online members in a role',
           '`$count #channel` — enable counting game',
           '`$count status` — counting status',
@@ -1548,6 +1691,53 @@ const RAID_NAME_PATTERNS = [
   /@everyone/i,
   /discord\.gg\//i
 ];
+
+// Auto-prompt reward claim when a ticket channel is created
+client.on('channelCreate', async (channel) => {
+  try {
+    if (!channel.guild || channel.type !== ChannelType.GuildText) return;
+    const name = (channel.name || '').toLowerCase();
+    const isTicket =
+      name.startsWith('ticket-') ||
+      name.startsWith('claim-') ||
+      name.includes('ticket') ||
+      (TICKET_CATEGORY_ID && channel.parentId === TICKET_CATEGORY_ID);
+
+    if (!isTicket) return;
+
+    // Wait a moment for Ticket Tool to finish setup / permissions
+    await new Promise((r) => setTimeout(r, 2500));
+
+    // Find ticket opener from channel name (ticket-username) or topic
+    let opener = null;
+    const match = channel.name.match(/^ticket[-_]?(.+)$/i);
+    if (match) {
+      const uname = match[1].replace(/[^a-z0-9._]/gi, '');
+      opener = channel.guild.members.cache.find(
+        (m) => m.user.username.toLowerCase() === uname.toLowerCase()
+      )?.user;
+    }
+    // Fallback: first non-bot human with view access who isn't staff-only
+    if (!opener) {
+      try {
+        const msgs = await channel.messages.fetch({ limit: 5 });
+        const human = msgs.find((m) => !m.author.bot);
+        if (human) opener = human.author;
+      } catch (_) {}
+    }
+
+    if (!opener) {
+      await channel.send(
+        '🎁 Welcome! Use `$claim` to choose a reward based on your invites.'
+      ).catch(() => {});
+      return;
+    }
+
+    await startRewardClaimFlow(channel, opener);
+  } catch (e) {
+    console.error('channelCreate ticket claim:', e.message);
+  }
+});
 
 client.on('channelUpdate', async (oldChannel, newChannel) => {
   try {

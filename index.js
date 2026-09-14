@@ -24,8 +24,10 @@ const PORT = process.env.PORT || 3000;
 // Staff role hierarchy for $staffstats (highest first)
 const OWNER_ROLE_ID = process.env.OWNER_ROLE_ID || '1547183159794204675';
 const CO_OWNER_ROLE_ID = process.env.CO_OWNER_ROLE_ID || '1547183161300090950';
+const MANAGER_ROLE_ID = process.env.MANAGER_ROLE_ID || '1549036072909021285';
 const HEAD_ADMIN_ROLE_ID = process.env.HEAD_ADMIN_ROLE_ID || '1547183162457718847';
 const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356';
+const STAFF_TEAM_ROLE_ID = process.env.STAFF_TEAM_ROLE_ID || ''; // optional: all staff role
 
 // Anti-raid settings
 const ANTIRAID_LOG_CHANNEL_ID = process.env.ANTIRAID_LOG_CHANNEL_ID || ''; // optional log channel
@@ -64,6 +66,7 @@ function loadData() {
       if (!d.coins) d.coins = {};
       if (!d.daily) d.daily = {};
       if (!d.counting) d.counting = {}; // { channelId: { current: number, lastUserId: string } }
+      if (!d.teamups) d.teamups = {}; // { channelId: { creatorId, members[], panelMsgId, status } }
       return d;
     }
   } catch (e) {
@@ -79,7 +82,8 @@ function loadData() {
     customUsed: [],
     coins: {},
     daily: {},
-    counting: {}
+    counting: {},
+    teamups: {}
   };
 }
 
@@ -139,6 +143,37 @@ function setCoins(userId, amount) {
 
 function addCoins(userId, amount) {
   setCoins(userId, getCoins(userId) + amount);
+}
+
+function buildTeamupPanel(team) {
+  const count = (team.members || []).length;
+  const status = team.status || 'pending';
+  const statusEmoji = status === 'closed' ? '🔒' : status === 'open' ? '🟢' : '🟡';
+  const statusText = status === 'closed' ? 'Closed' : status === 'open' ? 'Open' : 'Pending';
+  const memberLines = (team.members || [])
+    .map((id, i) => `\`#${i + 1}\` <@${id}>`)
+    .join('\n') || '—';
+
+  return new EmbedBuilder()
+    .setColor(status === 'closed' ? 0xed4245 : 0x57f287)
+    .setTitle('🎮 TeamUp Live Panel')
+    .setDescription(
+      `**People in the team:** \`${count}/20\`\n` +
+      `**Status:** ${statusEmoji} **${statusText}**\n\n` +
+      `**Members**\n${memberLines}\n\n` +
+      `\`$leave\` — leave this TeamUp\n` +
+      `\`$close\` — close & delete (creator/staff)`
+    )
+    .setFooter({ text: 'Ultimate Rewards • TeamUp' })
+    .setTimestamp();
+}
+
+async function updateTeamupPanel(channel, team) {
+  if (!team?.panelMsgId) return;
+  try {
+    const msg = await channel.messages.fetch(team.panelMsgId);
+    await msg.edit({ embeds: [buildTeamupPanel(team)] });
+  } catch (_) {}
 }
 
 function parseAccounts(text) {
@@ -1160,11 +1195,14 @@ client.on('messageCreate', async (message) => {
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle(`${game.emoji} Looking for Team — ${game.name}`)
-      .addFields(
-        { name: 'Player', value: message.author.username, inline: true },
-        { name: 'Info', value: `\`${info}\``, inline: true },
-        { name: 'Duration', value: `**${time} min**`, inline: true }
+      .setTitle(`👬 Looking for Team`)
+      .setDescription(
+        `**Game:** ${game.name}\n` +
+        `**Info:** \`${info}\`\n` +
+        `**Duration:** currently / **${time} min**\n` +
+        `**Status:** 🟢 **Active**\n` +
+        `**Members in the group:** \`1/20\`\n\n` +
+        `**Host:** ${message.author.username}`
       )
       .setFooter({ text: 'Ultimate Rewards • Team Finder' })
       .setTimestamp();
@@ -1173,7 +1211,7 @@ client.on('messageCreate', async (message) => {
   }
 
   // ========== $teamup @user(s) ==========
-  // Creates a private temporary channel for the group (max 20)
+  // Creates a private temporary channel for the group (max 20) with live panel
   if (cmd === 'teamup') {
     const targets = [...message.mentions.users.values()].filter((u) => !u.bot && u.id !== message.author.id);
 
@@ -1184,7 +1222,6 @@ client.on('messageCreate', async (message) => {
       return message.reply('Max **20** people total (you + 19 others).');
     }
 
-    // Check bot permissions
     if (!message.guild.members.me?.permissions.has([PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ViewChannel])) {
       return message.reply('I need **Manage Channels** permission to create teamup tickets.');
     }
@@ -1194,10 +1231,7 @@ client.on('messageCreate', async (message) => {
 
     try {
       const overwrites = [
-        {
-          id: message.guild.id, // @everyone
-          deny: [PermissionFlagsBits.ViewChannel]
-        },
+        { id: message.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
         {
           id: message.guild.members.me.id,
           allow: [
@@ -1216,8 +1250,7 @@ client.on('messageCreate', async (message) => {
         });
       }
 
-      // Also allow staff roles to see (optional but useful)
-      for (const roleId of [OWNER_ROLE_ID, CO_OWNER_ROLE_ID, HEAD_ADMIN_ROLE_ID, ADMIN_ROLE_ID]) {
+      for (const roleId of [OWNER_ROLE_ID, CO_OWNER_ROLE_ID, MANAGER_ROLE_ID, HEAD_ADMIN_ROLE_ID, ADMIN_ROLE_ID, STAFF_TEAM_ROLE_ID]) {
         if (roleId && message.guild.roles.cache.has(roleId)) {
           overwrites.push({
             id: roleId,
@@ -1237,21 +1270,25 @@ client.on('messageCreate', async (message) => {
 
       const ch = await message.guild.channels.create(createOpts);
 
-      const mentionList = memberIds.map((id) => `<@${id}>`).join(' ');
-      const welcome = new EmbedBuilder()
-        .setColor(0x57f287)
-        .setTitle('🎮 TeamUp Channel')
-        .setDescription(
-          `Private channel for **${message.author.username}** and friends.\n\n` +
-          `**Members:** ${mentionList}\n\n` +
-          `**Commands (in this channel):**\n` +
-          `\`$close\` — close & delete this ticket (creator or staff)\n` +
-          `\`$leave\` — leave this TeamUp`
-        )
-        .setFooter({ text: 'Ultimate Rewards • TeamUp' })
-        .setTimestamp();
+      const team = {
+        creatorId: message.author.id,
+        members: memberIds,
+        panelMsgId: null,
+        status: 'pending' // pending → open → closed
+      };
 
-      await ch.send({ content: mentionList, embeds: [welcome] });
+      const panel = buildTeamupPanel(team);
+      const mentionList = memberIds.map((id) => `<@${id}>`).join(' ');
+      const panelMsg = await ch.send({ content: mentionList, embeds: [panel] });
+
+      team.panelMsgId = panelMsg.id;
+      team.status = 'open';
+      data.teamups[ch.id] = team;
+      saveData();
+
+      // Update panel to "Open"
+      await panelMsg.edit({ embeds: [buildTeamupPanel(team)] });
+
       return message.reply(`✅ TeamUp created: ${ch}`);
     } catch (e) {
       console.error('teamup error:', e.message);
@@ -1266,26 +1303,46 @@ client.on('messageCreate', async (message) => {
       return message.reply('This command only works inside a **TeamUp** channel.');
     }
 
+    const team = data.teamups[ch.id];
+
     if (cmd === 'leave') {
-      // Remove the user from the channel
       try {
         await ch.permissionOverwrites.edit(message.author.id, { ViewChannel: false });
+
+        if (team) {
+          team.members = (team.members || []).filter((id) => id !== message.author.id);
+          saveData();
+          await updateTeamupPanel(ch, team);
+        }
+
         await message.reply(`👋 **${message.author.username}** left the TeamUp.`);
-        // If only bot + staff left, optionally do nothing
       } catch (e) {
         return message.reply('Could not remove you from this channel.');
       }
       return;
     }
 
-    // $close — only creator (channel name contains their username) or staff
-    const isCreator = ch.name.includes(message.author.username.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    // $close
+    const isCreator = team
+      ? team.creatorId === message.author.id
+      : ch.name.includes(message.author.username.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
     if (!isCreator && !isStaff(message.member)) {
       return message.reply('Only the **creator** or **staff** can close this TeamUp.');
     }
 
+    if (team) {
+      team.status = 'closed';
+      saveData();
+      await updateTeamupPanel(ch, team);
+    }
+
     await message.reply('🔒 Closing TeamUp in 3 seconds...');
     setTimeout(() => {
+      if (data.teamups[ch.id]) {
+        delete data.teamups[ch.id];
+        saveData();
+      }
       ch.delete('TeamUp closed').catch(() => {});
     }, 3000);
     return;
@@ -1299,14 +1356,16 @@ client.on('messageCreate', async (message) => {
     const staffRoleConfig = [
       { id: OWNER_ROLE_ID, label: '👑 Owner', key: 'owner' },
       { id: CO_OWNER_ROLE_ID, label: '💎 Co-Owner', key: 'coowner' },
+      { id: MANAGER_ROLE_ID, label: '📋 Manager', key: 'manager' },
       { id: HEAD_ADMIN_ROLE_ID, label: '🛡️ Head Admin', key: 'headadmin' },
-      { id: ADMIN_ROLE_ID, label: '⚔️ Admin', key: 'admin' }
+      { id: ADMIN_ROLE_ID, label: '⚔️ Admin', key: 'admin' },
+      { id: STAFF_TEAM_ROLE_ID, label: '👥 Staff Team', key: 'staffteam' }
     ].filter((r) => r.id); // only keep configured ones
 
     if (!staffRoleConfig.length) {
       return message.reply(
         'No staff roles configured.\n' +
-          'Set `OWNER_ROLE_ID`, `CO_OWNER_ROLE_ID`, `HEAD_ADMIN_ROLE_ID`, `ADMIN_ROLE_ID` in your environment.'
+          'Set staff role IDs in your environment (OWNER, CO_OWNER, MANAGER, HEAD_ADMIN, ADMIN, STAFF_TEAM).'
       );
     }
 
@@ -1344,6 +1403,14 @@ client.on('messageCreate', async (message) => {
       }
     }
 
+    // Collect bots
+    const botNames = [];
+    for (const [, member] of message.guild.members.cache) {
+      if (member.user.bot) {
+        botNames.push(member.displayName || member.user.username);
+      }
+    }
+
     // Build description sections
     const sections = [];
     for (const cfg of staffRoleConfig) {
@@ -1355,6 +1422,13 @@ client.on('messageCreate', async (message) => {
       } else {
         sections.push(`**${cfg.label}**\n${names.map((n) => `• ${n}`).join('\n')}`);
       }
+    }
+
+    // Bots section
+    if (botNames.length) {
+      sections.push(`**🤖 Bots**\n${botNames.map((n) => `• ${n}`).join('\n')}`);
+    } else {
+      sections.push('**🤖 Bots**\n• —');
     }
 
     // Role counts line

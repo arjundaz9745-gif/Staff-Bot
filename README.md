@@ -1,71 +1,23 @@
-# Staff Bot
+# Best Bot — `$best @role`
 
-Discord bot with staff tools, leaderboard, MCFA + custom stock, salary delivery & online checker.
-
-## Commands
-
-### `$best @role`
 Shows top members in a role by **messages + invites** (combined score).
+
+## Score
 - 1 message = 1 point
-- 1 invite = 25 points  
-Staff only.
+- 1 invite = 25 points
 
-### `$mcfa` / `$stock`
-Manage MCFA (email:pass) stock (staff only):
-- `$mcfa` — stock count
-- `$mcfa list` — paste stock as spoilers
-- `$mcfa add mail:pass` — add accounts
-- `$mcfa clear` or `$clear` — clear MCFA stock
-
-### `$pay @user`
-DM one MCFA account from stock to the user (staff only).
-
-### `$salary @user`
-DM the official **Staff Salary** reward message (with one MCFA account from stock).
-
-**Restricted** to:
-- User ID `1398979148063571989`
-- **or** members who have role ID `1547183159794204675`
-
-### `$custom`
-Separate custom stock system (any text, staff only):
-- `$custom` — stock count
-- `$custom list` — paste all as spoilers
-- `$custom add <text>` — add item(s) (supports multiple lines)
-- `$custom clear` — clear custom stock
-- `$custompay @user` — DM 1 item to one user
-- `$custompay @role` — DM 1 item to every member in the role
-
-### `$online @role`
-Shows members with the role who are currently online / idle / dnd (staff only).
-
-> Requires **Presence Intent** enabled in Discord Developer Portal.
-
-### `$help`
-Shows all commands.
-
-### `$clear`
-Shortcut to clear all MCFA stock (staff only).
-
-
-### `$staffstats`
-Premium staff team overview (staff only).
-
-Configure these environment variables:
-- `OWNER_ROLE_ID`
-- `ADMIN_ROLE_ID`
-- `MODERATOR_ROLE_ID`
-- `SUPPORT_ROLE_ID`
-
-Shows members under each role (highest role wins, no duplicates), online/offline counts, and clean display names (no pings, no IDs).
+## Command
+```
+$best @RoleName
+```
+Staff only (Manage Server / Admin / Manage Messages / or STAFF_ROLE_ID).
 
 ## Discord setup
 1. https://discord.com/developers/applications → New Application → Bot
 2. Enable intents:
    - Message Content Intent
    - Server Members Intent
-   - **Presence Intent** (needed for `$online`)
-3. Invite bot with permissions: Read Messages, Send Messages, Manage Server (for invites), Send DMs
+3. Invite bot with permissions: Read Messages, Send Messages, Manage Server (for invites)
 4. Copy bot token
 
 ## Render deploy

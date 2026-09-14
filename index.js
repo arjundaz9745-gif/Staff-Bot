@@ -310,6 +310,51 @@ async function startRewardClaimFlow(channel, user) {
 }
 
 
+
+function emailFormatOk(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ''));
+}
+function domainOf(email) {
+  const i = String(email || '').lastIndexOf('@');
+  return i >= 0 ? String(email).slice(i + 1).toLowerCase() : '';
+}
+function isAllowedEmailDomain(domain) {
+  const d = String(domain || '').toLowerCase();
+  if (!d) return false;
+  const exact = new Set([
+    'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'passport.com',
+    'gmail.com', 'googlemail.com',
+    'yahoo.com', 'yahoo.co.in', 'icloud.com', 'me.com', 'mac.com',
+    'proton.me', 'protonmail.com'
+  ]);
+  if (exact.has(d)) return true;
+  // outlook.fr, hotmail.es, live.co.uk, outlook.com.br, msn.nl, etc.
+  if (/^(outlook|hotmail|live|msn)(\.[a-z0-9-]+)+$/i.test(d)) return true;
+  if (/^gmail(\.[a-z]{2,})+$/i.test(d)) return true;
+  if (/^yahoo(\.[a-z0-9-]+)+$/i.test(d)) return true;
+  return false;
+}
+function passNotes(pass) {
+  const notes = [];
+  const pw = String(pass || '');
+  if (pw.length >= 8) notes.push('length 8+');
+  else notes.push('short (<8)');
+  if (/[A-Z]/.test(pw)) notes.push('uppercase');
+  if (/[a-z]/.test(pw)) notes.push('lowercase');
+  if (/[0-9]/.test(pw)) notes.push('number');
+  if (/[^A-Za-z0-9]/.test(pw)) notes.push('symbol');
+  return notes.join(', ');
+}
+function classifyAccount(acc) {
+  const idx = acc.indexOf(':');
+  const email = acc.slice(0, idx);
+  const pass = acc.slice(idx + 1);
+  const domain = domainOf(email);
+  const fmt = emailFormatOk(email);
+  const domOk = isAllowedEmailDomain(domain);
+  return { email, pass, domain, fmt, domOk, ok: fmt && domOk, acc: `${email}:${pass}` };
+}
+
 function parseAccounts(text) {
   // Accept: mail:pass | mail:pass,mail:pass | one per line | with ||spoilers||
   const cleaned = text
@@ -612,19 +657,23 @@ client.on('messageCreate', async (message) => {
       const accounts = parseAccounts(rest);
       if (!accounts.length) {
         return message.reply(
-          'Usage:\n`$mcfa add mail:pass`\n`$mcfa add mail:pass mail:pass`\nOr multiple lines after add'
+          'Usage:\n`$mcfa add mail:pass`\n`$mcfa add mail:pass mail:pass`\nOnly valid domains (outlook.fr, gmail, …) are stored.'
         );
       }
-      // avoid exact duplicates still in stock
       let added = 0;
+      let skipped = 0;
       for (const a of accounts) {
-        if (!data.mcfaStock.includes(a)) {
-          data.mcfaStock.push(a);
+        const c = classifyAccount(a);
+        if (!c.ok) { skipped++; continue; }
+        if (!data.mcfaStock.includes(c.acc)) {
+          data.mcfaStock.push(c.acc);
           added++;
         }
       }
       saveData();
-      return message.reply(`Added **${added}** MCFA · Stock now **${data.mcfaStock.length}**`);
+      return message.reply(
+        `Added **${added}** MCFA · skipped invalid **${skipped}** · Stock now **${data.mcfaStock.length}**`
+      );
     }
 
     if (sub === 'clear') {
@@ -1620,84 +1669,74 @@ client.on('messageCreate', async (message) => {
 
 
   // ========== $format email:pass (format + domain only — NO login) ==========
+  // $format a:b c:d     → check only
+  // $format add a:b     → check + add valid ones to MCFA stock
   if (cmd === 'format' || cmd === 'emailcheck') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
 
     const rest = body.slice(cmd.length).trim();
     if (!rest) {
       return message.reply(
-        'Usage:\n`$format email:pass`\n`$format email:pass email:pass`\n(multiple OK)\n\n' +
-          'Checks **format + domain only** (does **not** try to log in).'
+        'Usage:\n' +
+          '`$format email:pass` — check only\n' +
+          '`$format add email:pass` — check + **add valid to stock**\n' +
+          'Multiple accounts OK. Accepts `outlook.fr`, `hotmail.es`, etc.\n' +
+          'Does **not** try to log in.'
       );
     }
 
-    const accounts = parseAccounts(rest);
+    const doAdd = (args[0] || '').toLowerCase() === 'add';
+    const listText = doAdd
+      ? body.slice(body.toLowerCase().indexOf('add') + 3).trim()
+      : rest;
+    const accounts = parseAccounts(listText);
     if (!accounts.length) {
-      return message.reply('No `email:pass` found. Example: `$format user@outlook.com:Pass123!`');
-    }
-
-    const allowed = new Set([
-      'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'passport.com',
-      'outlook.in', 'hotmail.co.uk', 'live.co.uk', 'outlook.co.uk',
-      'gmail.com', 'googlemail.com',
-      'yahoo.com', 'yahoo.co.in', 'icloud.com', 'proton.me', 'protonmail.com'
-    ]);
-
-    function emailFormatOk(email) {
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    }
-    function domainOf(email) {
-      const i = email.lastIndexOf('@');
-      return i >= 0 ? email.slice(i + 1).toLowerCase() : '';
-    }
-    function passNotes(pass) {
-      const notes = [];
-      if (pass.length >= 8) notes.push('length 8+');
-      else notes.push('short (<8)');
-      if (/[A-Z]/.test(pass)) notes.push('uppercase');
-      if (/[a-z]/.test(pass)) notes.push('lowercase');
-      if (/[0-9]/.test(pass)) notes.push('number');
-      if (/[^A-Za-z0-9]/.test(pass)) notes.push('symbol');
-      return notes.join(', ');
+      return message.reply('No `email:pass` found. Example: `$format add user@outlook.fr:Pass123!`');
     }
 
     const valid = [];
     const invalid = [];
 
     for (const acc of accounts) {
-      const idx = acc.indexOf(':');
-      const email = acc.slice(0, idx);
-      const pass = acc.slice(idx + 1);
-      const domain = domainOf(email);
-      const fmt = emailFormatOk(email);
-      const domOk = allowed.has(domain);
-      const passOk = pass.length >= 8;
-
+      const c = classifyAccount(acc);
+      const passOk = c.pass.length >= 8;
       const block =
         `📧 **Email Check**\n` +
-        `Email: \`${email}\`\n` +
+        `Email: \`${c.email}\`\n` +
         `Password: \`••••••••\`\n` +
         `─────────────\n` +
-        `${fmt ? '✅' : '❌'} Email format: ${fmt ? 'Valid' : 'Invalid'}\n` +
-        `${domOk ? '✅' : '❌'} Domain: ${domain || '—'}${domOk ? '' : ' (not allowed)'}\n` +
+        `${c.fmt ? '✅' : '❌'} Email format: ${c.fmt ? 'Valid' : 'Invalid'}\n` +
+        `${c.domOk ? '✅' : '❌'} Domain: ${c.domain || '—'}${c.domOk ? '' : ' (not allowed)'}\n` +
         `${passOk ? '✅' : '⚠️'} Password length: ${passOk ? 'OK (8+)' : 'Too short'}\n` +
-        `⚠️ Notes: ${passNotes(pass)}\n` +
+        `⚠️ Notes: ${passNotes(c.pass)}\n` +
         `─────────────\n` +
-        `Status: **${fmt && domOk ? 'Looks valid' : 'Invalid / skipped'}**`;
+        `Status: **${c.ok ? 'Looks valid' : 'Invalid / skipped'}**`;
 
-      if (fmt && domOk) valid.push({ email, pass, block });
-      else invalid.push({ email, block });
+      if (c.ok) valid.push({ ...c, block });
+      else invalid.push({ email: c.email, block });
+    }
+
+    let added = 0;
+    if (doAdd) {
+      for (const v of valid) {
+        if (!data.mcfaStock.includes(v.acc)) {
+          data.mcfaStock.push(v.acc);
+          added++;
+        }
+      }
+      saveData();
     }
 
     await message.reply(
-      `Checked **${accounts.length}** · ✅ valid: **${valid.length}** · ❌ skipped: **${invalid.length}**`
+      `Checked **${accounts.length}** · ✅ valid: **${valid.length}** · ❌ skipped: **${invalid.length}**` +
+        (doAdd ? ` · 📥 added to stock: **${added}** (stock now **${data.mcfaStock.length}**)` : '')
     );
 
-    for (const v of valid.slice(0, 15)) {
-      await message.channel.send(v.block + `\nReveal: ||${v.email}:${v.pass}||`);
+    for (const v of valid.slice(0, 12)) {
+      await message.channel.send(v.block + `\nReveal: ||${v.acc}||`);
     }
-    if (valid.length > 15) {
-      await message.channel.send(`…and **${valid.length - 15}** more valid (showing first 15).`);
+    if (valid.length > 12) {
+      await message.channel.send(`…and **${valid.length - 12}** more valid.`);
     }
     if (invalid.length && invalid.length <= 15) {
       await message.channel.send(

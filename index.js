@@ -13,7 +13,8 @@ const {
   ButtonStyle,
   ComponentType,
   ChannelType,
-  PermissionsBitField
+  PermissionsBitField,
+  AttachmentBuilder
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -68,7 +69,9 @@ function loadData() {
       if (!d.coins) d.coins = {};
       if (!d.daily) d.daily = {};
       if (!d.counting) d.counting = {}; // { channelId: { current: number, lastUserId: string } }
-      if (!d.teamups) d.teamups = {}; // { channelId: { creatorId, members[], panelMsgId, status } }
+      if (!d.teamups) d.teamups = {};
+      if (!Array.isArray(d.hits)) d.hits = [];
+      if (!d.exportCounts) d.exportCounts = { mcfa: 0, custom: 0, hits: 0 };
       return d;
     }
   } catch (e) {
@@ -85,7 +88,9 @@ function loadData() {
     coins: {},
     daily: {},
     counting: {},
-    teamups: {}
+    teamups: {},
+    hits: [],
+    exportCounts: { mcfa: 0, custom: 0, hits: 0 }
   };
 }
 
@@ -101,7 +106,9 @@ let data = loadData();
 
 // In-memory anti-raid trackers (reset on restart – fine for short windows)
 const recentMentions = new Map(); // key: `${authorId}:${targetId}` → timestamps[]
-const recentChannelRenames = new Map(); // key: userId → timestamps[]
+const recentChannelRenames = new Map();
+
+const hitRunner = { running: false, timer: null, channelId: null, index: 0, queue: [] };
 
 
 const client = new Client({
@@ -449,6 +456,136 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
+
+
+async function exportStockToChannel(message, kind, lines, label) {
+  if (!lines.length) {
+    return message.reply(`No **${label}** stock to export.`);
+  }
+  const ch =
+    message.mentions.channels.first() ||
+    message.guild.channels.cache.get((message.content.match(/<#(\d+)>/) || [])[1]) ||
+    message.channel;
+
+  if (!ch || !ch.isTextBased?.()) {
+    return message.reply('Mention a text channel: `$mcfa export #channel`');
+  }
+
+  if (!data.exportCounts) data.exportCounts = { mcfa: 0, custom: 0, hits: 0 };
+  data.exportCounts[kind] = (data.exportCounts[kind] || 0) + 1;
+  const n = data.exportCounts[kind];
+  saveData();
+
+  const filename = `export_${n}.txt`;
+  const body =
+    `Ultimate Rewards — ${label} export #${n}\n` +
+    `Exported by: ${message.author.tag} (${message.author.id})\n` +
+    `At: ${new Date().toISOString()}\n` +
+    `Count: ${lines.length}\n` +
+    `${'='.repeat(40)}\n` +
+    lines.join('\n') +
+    `\n`;
+
+  const file = new AttachmentBuilder(Buffer.from(body, 'utf8'), { name: filename });
+  await ch.send({
+    content: `📤 **${label} export** \`${filename}\` — **${lines.length}** item(s)`,
+    files: [file]
+  });
+  return message.reply(
+    `Exported successful all available **${label}** into ${ch}.\nUploaded as **${filename}**.`
+  );
+}
+
+function ultimateFaqReply(text) {
+  const q = String(text || '').toLowerCase().trim();
+
+  // Block: bot-making + clearly illegal
+  if (/(how to (make|code|build|create) (a )?bot|discord\.js tutorial|steal account|hack account|crack account|carding|phishing|doxx|ransomware)/i.test(q)) {
+    return "I can't help with that. For **Ultimate Rewards** help, open a ticket or ask staff.";
+  }
+
+  if (!q || q === 'help' || /^(hi|hello|hey)\b/.test(q)) {
+    return (
+      "Hey! I'm the **Ultimate Rewards** helper.\n" +
+      "Ask me about the server, **MCFA/NFA/SFA**, invites, tickets, or products.\n" +
+      "Website: https://ultimate-rewards.onrender.com"
+    );
+  }
+
+  if (/(website|site|web page|webstore|store link|url)/i.test(q)) {
+    return (
+      "**Website:** https://ultimate-rewards.onrender.com\n" +
+      "Login with Discord → products, payment, tickets."
+    );
+  }
+
+  if (/\bmcfa\b/.test(q)) {
+    return (
+      "**MCFA** = Minecraft **Full Access** (you get email + password style access as delivered by staff).\n" +
+      "Order/claim via ticket or the website. Staff verify payment then deliver."
+    );
+  }
+  if (/\bnfa\b/.test(q)) {
+    return (
+      "**NFA** = **Non-Full Access** account type (more limited than MCFA).\n" +
+      "Ask staff in a ticket what's in stock right now."
+    );
+  }
+  if (/\bsfa\b/.test(q)) {
+    return (
+      "**SFA** = **Semi-Full Access** — between NFA and MCFA depending on the listing.\n" +
+      "Open a ticket for current stock and details."
+    );
+  }
+
+  if (/(ticket|support|staff help|order problem|payment issue|upi|qr)/i.test(q)) {
+    return (
+      "Open a **support ticket** on this Discord, or use the site:\n" +
+      "https://ultimate-rewards.onrender.com\n" +
+      "Describe your issue and staff will help."
+    );
+  }
+
+  if (/(invite|reward|claim|milestone)/i.test(q)) {
+    return (
+      "Create a **permanent invite**, invite real friends, hit a milestone, then open a ticket and use **`$claim`** (or follow the ticket bot) to pick your reward.\n" +
+      "Fake/J4J invites don't count."
+    );
+  }
+
+  if (/(price|cost|how much|rate|inr|robux|crunchyroll|youtube|premium)/i.test(q)) {
+    return (
+      "Prices change — check **https://ultimate-rewards.onrender.com** or ask staff in a ticket for the latest rates."
+    );
+  }
+
+  if (/(legit|scam|trusted|safe)/i.test(q)) {
+    return (
+      "Use official tickets and the website only. Never pay random DMs.\n" +
+      "Site: https://ultimate-rewards.onrender.com — if something's wrong, open a ticket."
+    );
+  }
+
+  if (/(stock|available|have mcfa|out of stock)/i.test(q)) {
+    return "Stock changes fast. Ask staff in a ticket or check the website for what's available.";
+  }
+
+  if (/(discord|server|rules)/i.test(q)) {
+    return "This is the **Ultimate Rewards** server — rewards, digital products, invite events. Follow staff instructions in tickets. Website: https://ultimate-rewards.onrender.com";
+  }
+
+  // Friendly general fallback (still on-topic helper, not unrestricted AI)
+  return (
+    "I'm here for **Ultimate Rewards** questions.\n" +
+    "• Website: https://ultimate-rewards.onrender.com\n" +
+    "• Products: MCFA / NFA / SFA & more\n" +
+    "• Help: open a **ticket**\n" +
+    "• Staff tools: `$help`\n\n" +
+    "Try asking about website, MCFA, tickets, invites, or prices. I can't help with bot-making or illegal stuff."
+  );
+}
+
+
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
@@ -461,6 +598,20 @@ client.on('messageCreate', async (message) => {
       await message.react('✅').catch(() => {});
     }
   } catch (_) {}
+
+
+  // ========== @Bot FAQ AI ==========
+  try {
+    if (client.user && message.mentions.has(client.user) && !message.author.bot) {
+      const cleaned = message.content
+        .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
+        .trim();
+      const reply = ultimateFaqReply(cleaned || 'help');
+      await message.reply(reply).catch(() => {});
+    }
+  } catch (e) {
+    console.error('faq:', e.message);
+  }
 
   // ========== ANTI MASS-PING ==========
   // If the same user is mentioned 3+ times quickly by one person → 3 day timeout
@@ -676,7 +827,13 @@ client.on('messageCreate', async (message) => {
       );
     }
 
-    if (sub === 'clear') {
+    
+    if (sub === 'export') {
+      const lines = data.mcfaStock || [];
+      return exportStockToChannel(message, 'mcfa', lines, 'MCFA');
+    }
+
+if (sub === 'clear') {
       const n = data.mcfaStock.length;
       data.mcfaStock = [];
       saveData();
@@ -689,12 +846,13 @@ client.on('messageCreate', async (message) => {
         '`$mcfa list` — paste all as ||mail:pass||\n' +
         '`$mcfa add mail:pass` — add stock\n' +
         '`$mcfa clear` / `$clear` — clear stock\n' +
-        '`$pay @user` — DM one MCFA to user\n' +
-        '`$salary @user` — DM staff salary reward (restricted)'
+        '`$mcfa export #channel` — export stock as export_N.txt\n' +
+        '`$pay @user [n]` — DM MCFA\n' +
+        '`$salary @user [n]` — salary (restricted)'
     );
   }
 
-  // ========== $pay @user ==========
+  // ========== $pay @user [amount] ==========
   if (cmd === 'pay') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
 
@@ -703,43 +861,61 @@ client.on('messageCreate', async (message) => {
       (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
 
     if (!user || user.bot) {
-      return message.reply('Usage: `$pay @user` — sends 1 MCFA to their DM');
+      return message.reply('Usage: `$pay @user` or `$pay @user 10` — DM MCFA from stock');
     }
 
-    if (!data.mcfaStock.length) {
-      return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
+    let amount = 1;
+    for (const a of args) {
+      if (/^\d+$/.test(a)) {
+        amount = Math.min(25, Math.max(1, parseInt(a, 10)));
+        break;
+      }
     }
 
-    const account = data.mcfaStock.shift();
-    data.mcfaUsed.push({
-      account,
-      to: user.id,
-      by: message.author.id,
-      at: new Date().toISOString()
-    });
+    if (data.mcfaStock.length < amount) {
+      return message.reply(
+        `Not enough stock. Need **${amount}**, have **${data.mcfaStock.length}**.`
+      );
+    }
+
+    const sent = [];
+    for (let i = 0; i < amount; i++) {
+      const account = data.mcfaStock.shift();
+      data.mcfaUsed.push({
+        account,
+        to: user.id,
+        by: message.author.id,
+        at: new Date().toISOString()
+      });
+      sent.push(account);
+    }
     saveData();
 
     try {
-      await user.send(
-        `**Ultimate Reward — MCFA delivery**\n` +
-          `Here is your account (click to reveal):\n||${account}||\n\n` +
-          `Delivered by staff. Do not share.`
-      );
+      let dm =
+        `**Ultimate Rewards — MCFA delivery**\n` +
+        `You received **${sent.length}** account(s). Click spoilers to reveal:\n\n`;
+      sent.forEach((acc, i) => {
+        dm += `**#${i + 1}** ||${acc}||\n`;
+      });
+      dm += `\nDelivered by staff. Do not share.`;
+      await user.send(dm);
       return message.reply(
-        `Paid **1 MCFA** to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
+        `Paid **${sent.length}** MCFA to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
       );
     } catch (e) {
-      // DM closed — put account back
-      data.mcfaStock.unshift(account);
-      data.mcfaUsed.pop();
+      for (let i = sent.length - 1; i >= 0; i--) {
+        data.mcfaStock.unshift(sent[i]);
+        data.mcfaUsed.pop();
+      }
       saveData();
       return message.reply(
-        `Could not DM ${user} (DMs closed). Account was **not** taken from stock.`
+        `Could not DM ${user} (DMs closed). Accounts were **not** taken from stock.`
       );
     }
   }
 
-  // ========== $salary @user ==========
+  // ========== $salary @user [amount] ==========
   // Only usable by user ID 1398979148063571989 or members with role 1547183159794204675
   if (cmd === 'salary') {
     const ALLOWED_USER_ID = '1398979148063571989';
@@ -758,42 +934,60 @@ client.on('messageCreate', async (message) => {
       (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
 
     if (!user || user.bot) {
-      return message.reply('Usage: `$salary @user` — DMs staff salary reward');
+      return message.reply('Usage: `$salary @user` or `$salary @user 3`');
     }
 
-    if (!data.mcfaStock.length) {
-      return message.reply('No MCFA stock left. Add with `$mcfa add mail:pass`');
+    let amount = 1;
+    for (const a of args) {
+      if (/^\d+$/.test(a)) {
+        amount = Math.min(25, Math.max(1, parseInt(a, 10)));
+        break;
+      }
     }
 
-    const account = data.mcfaStock.shift();
-    data.mcfaUsed.push({
-      account,
-      to: user.id,
-      by: message.author.id,
-      at: new Date().toISOString(),
-      type: 'salary'
-    });
+    if (data.mcfaStock.length < amount) {
+      return message.reply(
+        `Not enough stock. Need **${amount}**, have **${data.mcfaStock.length}**.`
+      );
+    }
+
+    const sent = [];
+    for (let i = 0; i < amount; i++) {
+      const account = data.mcfaStock.shift();
+      data.mcfaUsed.push({
+        account,
+        to: user.id,
+        by: message.author.id,
+        at: new Date().toISOString(),
+        type: 'salary'
+      });
+      sent.push(account);
+    }
     saveData();
 
-    const salaryMsg =
+    let salaryMsg =
       `# 💰 Staff Salary\n\n` +
-      `Your staff reward for this month:\n\n` +
-      `« Reward: ||${account}|| »\n\n` +
-      `Thank you for your hard work and dedication to Ultimate Rewards! 🫡\n` +
+      `Your staff reward for this month (**${sent.length}**):\n\n`;
+    sent.forEach((acc, i) => {
+      salaryMsg += `« Reward #${i + 1}: ||${acc}|| »\n`;
+    });
+    salaryMsg +=
+      `\nThank you for your hard work and dedication to Ultimate Rewards! 🫡\n` +
       `Keep up the great work! 🚀`;
 
     try {
       await user.send(salaryMsg);
       return message.reply(
-        `Sent **Staff Salary** to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
+        `Sent **${sent.length}** Staff Salary to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
       );
     } catch (e) {
-      // DM closed — put account back
-      data.mcfaStock.unshift(account);
-      data.mcfaUsed.pop();
+      for (let i = sent.length - 1; i >= 0; i--) {
+        data.mcfaStock.unshift(sent[i]);
+        data.mcfaUsed.pop();
+      }
       saveData();
       return message.reply(
-        `Could not DM ${user} (DMs closed). Account was **not** taken from stock.`
+        `Could not DM ${user} (DMs closed). Accounts were **not** taken from stock.`
       );
     }
   }
@@ -908,7 +1102,13 @@ client.on('messageCreate', async (message) => {
       return message.reply(`Added **${added}** custom item(s) · Stock now **${data.customStock.length}**`);
     }
 
-    if (sub === 'clear') {
+    
+    if (sub === 'export') {
+      const lines = data.customStock || [];
+      return exportStockToChannel(message, 'custom', lines, 'Custom');
+    }
+
+if (sub === 'clear') {
       const n = data.customStock.length;
       data.customStock = [];
       saveData();
@@ -921,8 +1121,9 @@ client.on('messageCreate', async (message) => {
         '`$custom list` — paste all as spoilers\n' +
         '`$custom add <text>` — add item(s)\n' +
         '`$custom clear` — clear custom stock\n' +
-        '`$custompay @user` — DM 1 item to one user\n' +
-        '`$custompay @role` — DM 1 item to every member in the role'
+        '`$custom export #channel` — export as export_N.txt\n' +
+        '`$custompay @user` — DM 1 item\n' +
+        '`$custompay @role` — DM 1 to role members'
     );
   }
 
@@ -1748,6 +1949,204 @@ client.on('messageCreate', async (message) => {
   }
 
 
+
+  // ========== $hit (Ultimate — blue embed UI) ==========
+  function buildHitEmbed(hit) {
+    const hyp = hit.hypixel || 'Not Available';
+    const don = hit.donut || 'Not Available';
+    return new EmbedBuilder()
+      .setColor(0x3b82f6)
+      .setAuthor({ name: 'Ultimate Rewards • Hit' })
+      .addFields(
+        { name: '📧 Email', value: `||${hit.email}||`, inline: false },
+        { name: '🔑 Password', value: `||${hit.pass}||`, inline: false },
+        { name: '🐯 Type', value: 'MCFA', inline: false },
+        { name: '🛡️ Hypixel', value: `📢 **${hyp}**`, inline: true },
+        {
+          name: 'Hypixel Stats',
+          value: '```\nRank: N/A\nLevel: N/A\n```',
+          inline: true
+        },
+        { name: '🛡️ Donut', value: `📢 **${don}**`, inline: true },
+        {
+          name: 'Donut Stats',
+          value: '```\nPlaytime: N/A\nMoney: N/A\n```',
+          inline: true
+        },
+        { name: '🌸 Capes', value: 'Starter Free Cape', inline: false },
+        { name: '🔑 Combo', value: `||${hit.email}:${hit.pass}||`, inline: false }
+      )
+      .setFooter({ text: 'Verified by Ultimate Rewards ⭐⭐⭐⭐⭐' })
+      .setTimestamp(hit.uploadedAt ? new Date(hit.uploadedAt) : new Date());
+  }
+
+  async function stopHitRunner(msg, channel) {
+    if (hitRunner.timer) clearTimeout(hitRunner.timer);
+    hitRunner.timer = null;
+    hitRunner.running = false;
+    hitRunner.queue = [];
+    hitRunner.index = 0;
+    if (channel && msg) await channel.send(msg).catch(() => {});
+  }
+
+  async function runNextHit() {
+    if (!hitRunner.running) return;
+    const ch = client.channels.cache.get(hitRunner.channelId);
+    if (!ch) {
+      hitRunner.running = false;
+      return;
+    }
+    if (hitRunner.index >= hitRunner.queue.length) {
+      await stopHitRunner(
+        `✅ **Hit run finished** — sent **${hitRunner.queue.length}** hit(s).`,
+        ch
+      );
+      return;
+    }
+    const hit = hitRunner.queue[hitRunner.index++];
+    try {
+      await ch.send({ embeds: [buildHitEmbed(hit)] });
+    } catch (e) {
+      console.error('hit send:', e.message);
+    }
+    if (!hitRunner.running) return;
+    if (hitRunner.index >= hitRunner.queue.length) {
+      await stopHitRunner(
+        `✅ **Hit run finished** — sent **${hitRunner.queue.length}** hit(s).`,
+        ch
+      );
+      return;
+    }
+    hitRunner.timer = setTimeout(() => runNextHit(), 5000);
+  }
+
+  if (cmd === 'hit') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const sub = (args[0] || '').toLowerCase();
+
+    if (sub === 'start') {
+      if (hitRunner.running) return message.reply('Already running. `$hit stop` first.');
+      if (!(data.hits || []).length) {
+        return message.reply('Queue empty. `$hit add hypixel email:pass` or `$hit add donut email:pass`');
+      }
+      hitRunner.running = true;
+      hitRunner.channelId = message.channel.id;
+      hitRunner.index = 0;
+      hitRunner.queue = [...data.hits];
+      await message.reply(
+        `🚀 **Hit run started** — **${hitRunner.queue.length}** hit(s), **5s** apart.\n\`$hit stop\` to cancel.`
+      );
+      runNextHit();
+      return;
+    }
+
+    if (sub === 'stop') {
+      if (!hitRunner.running) return message.reply('No hit run active.');
+      await stopHitRunner('🛑 **Hit run stopped.**', message.channel);
+      return;
+    }
+
+    if (sub === 'list' || sub === 'queue' || !sub) {
+      const hits = data.hits || [];
+      if (!hits.length) return message.reply('Hit queue empty.');
+      const lines = hits.slice(0, 30).map((h, i) => {
+        const flags = [
+          h.hypixel === 'Available' ? 'Hyp' : null,
+          h.donut === 'Available' ? 'Donut' : null
+        ]
+          .filter(Boolean)
+          .join('+') || '—';
+        return `\`#${i + 1}\` \`${h.email}\` · ${flags}`;
+      });
+      return message.reply(
+        `**Hit queue:** **${hits.length}**\n${lines.join('\n')}` +
+          (hits.length > 30 ? `\n…+${hits.length - 30} more` : '')
+      );
+    }
+
+    if (sub === 'export') {
+      const hits = data.hits || [];
+      if (!hits.length) return message.reply('Nothing to export.');
+      const lines = hits.map(
+        (h) =>
+          `${h.email}:${h.pass} | hyp=${h.hypixel} | donut=${h.donut}`
+      );
+      const chunks = [];
+      let buf = '**Hit export (backup before redeploy)**\n```\n';
+      for (const line of lines) {
+        if ((buf + line + '\n').length > 1800) {
+          chunks.push(buf + '```');
+          buf = '```\n';
+        }
+        buf += line + '\n';
+      }
+      chunks.push(buf + '```');
+      for (const c of chunks) await message.channel.send(c);
+      return;
+    }
+
+    if (sub === 'clear') {
+      const n = (data.hits || []).length;
+      data.hits = [];
+      saveData();
+      return message.reply(`Cleared **${n}** hits.`);
+    }
+
+    if (sub === 'add') {
+      // $hit add hypixel email:pass ...
+      // $hit add donut email:pass ...
+      // $hit add both email:pass ...
+      const kind = (args[1] || '').toLowerCase();
+      if (!['hypixel', 'hyp', 'donut', 'both', 'all'].includes(kind)) {
+        return message.reply(
+          'Usage:\n' +
+            '`$hit add hypixel email:pass email:pass`\n' +
+            '`$hit add donut email:pass ...`\n' +
+            '`$hit add both email:pass ...`'
+        );
+      }
+      const rest = body.slice(body.toLowerCase().indexOf(kind) + kind.length).trim();
+      const accounts = parseAccounts(rest);
+      if (!accounts.length) {
+        return message.reply('No `email:pass` found.');
+      }
+      let hyp = 'Not Available';
+      let don = 'Not Available';
+      if (kind === 'hypixel' || kind === 'hyp' || kind === 'both' || kind === 'all') {
+        hyp = 'Available';
+      }
+      if (kind === 'donut' || kind === 'both' || kind === 'all') {
+        don = 'Available';
+      }
+      if (!data.hits) data.hits = [];
+      for (const acc of accounts) {
+        const idx = acc.indexOf(':');
+        data.hits.push({
+          email: acc.slice(0, idx),
+          pass: acc.slice(idx + 1),
+          type: 'MCFA',
+          hypixel: hyp,
+          donut: don,
+          uploadedAt: new Date().toISOString(),
+          by: message.author.id
+        });
+      }
+      saveData();
+      return message.reply(
+        `Added **${accounts.length}** hit(s) · Hypixel: **${hyp}** · Donut: **${don}** · Queue: **${data.hits.length}**`
+      );
+    }
+
+    return message.reply(
+      '**Hits**\n' +
+        '`$hit add hypixel email:pass ...`\n' +
+        '`$hit add donut email:pass ...`\n' +
+        '`$hit add both email:pass ...`\n' +
+        '`$hit list` · `$hit start` · `$hit stop` · `$hit export` · `$hit clear`'
+    );
+  }
+
+
   // ========== $help ==========
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
@@ -1763,16 +2162,19 @@ client.on('messageCreate', async (message) => {
           '`$mcfa list` — show all accounts',
           '`$mcfa add mail:pass` — add accounts',
           '`$mcfa clear` or `$clear` — clear MCFA stock',
-          '`$pay @user` — DM 1 MCFA account',
+          '`$mcfa export #channel` — upload export_N.txt of stock',
+          '`$pay @user` / `$pay @user 10` — DM MCFA from stock',
+          '`$hit add hypixel/donut/both` · `$hit start/stop/list/export` — hits',
           '',
           '**Salary**',
-          '`$salary @user` — DM staff salary reward *(restricted)*',
+          '`$salary @user` / `$salary @user 3` — salary DM *(restricted)*',
           '',
           '**Custom Stock**',
           '`$custom` — custom stock count',
           '`$custom list` — show all custom items',
           '`$custom add <text>` — add custom item(s)',
           '`$custom clear` — clear custom stock',
+          '`$custom export #channel` — upload export_N.txt',
           '`$custompay @user` — DM 1 item to one user',
           '`$custompay @role` — DM 1 item to every member in the role',
           '',

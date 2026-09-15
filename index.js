@@ -141,6 +141,16 @@ function isCoOwnerOrAbove(member) {
   return false;
 }
 
+function isHeadAdminOrAbove(member) {
+  if (!member) return false;
+  if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
+  if (OWNER_ROLE_ID && member.roles.cache.has(OWNER_ROLE_ID)) return true;
+  if (CO_OWNER_ROLE_ID && member.roles.cache.has(CO_OWNER_ROLE_ID)) return true;
+  if (MANAGER_ROLE_ID && member.roles.cache.has(MANAGER_ROLE_ID)) return true;
+  if (HEAD_ADMIN_ROLE_ID && member.roles.cache.has(HEAD_ADMIN_ROLE_ID)) return true;
+  return false;
+}
+
 function getCoins(userId) {
   return data.coins[userId] || 0;
 }
@@ -2147,6 +2157,181 @@ if (sub === 'clear') {
   }
 
 
+
+  // ========== $daily (Head Admin+) ==========
+  // $daily @role [n]     — randomly pick n members from role, ping command user
+  // $daily pay @user     — 5–8s spin UI → custom ~65% / MCFA ~35% → DM + vouch warning
+  if (cmd === 'daily') {
+    if (!isHeadAdminOrAbove(message.member)) {
+      return message.reply('Head Admin or above only.');
+    }
+
+    const sub = (args[0] || '').toLowerCase();
+
+    // ---- $daily pay @user ----
+    if (sub === 'pay') {
+      const user =
+        message.mentions.users.first() ||
+        (args[1] &&
+          (await client.users.fetch(args[1].replace(/[<@!>]/g, '')).catch(() => null)));
+
+      if (!user || user.bot) {
+        return message.reply('Usage: `$daily pay @user`');
+      }
+
+      const hasCustom = (data.customStock || []).length > 0;
+      const hasMcfa = (data.mcfaStock || []).length > 0;
+      if (!hasCustom && !hasMcfa) {
+        return message.reply('No **custom** or **MCFA** stock left for daily pay.');
+      }
+
+      // Weighted: 65% custom, 35% MCFA (if that stock empty, use the other)
+      let pool = Math.random() < 0.65 ? 'custom' : 'mcfa';
+      if (pool === 'custom' && !hasCustom) pool = 'mcfa';
+      if (pool === 'mcfa' && !hasMcfa) pool = 'custom';
+
+      const spinMs = 5000 + Math.floor(Math.random() * 3001); // 5–8s
+      const spinEmbed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle('🎰 Daily Spin')
+        .setDescription(
+          `Spinning for ${user}…\n\n` +
+            `⏳ Please wait **${(spinMs / 1000).toFixed(1)}s**\n` +
+            `🎯 Pool: Custom **65%** · MCFA **35%**`
+        )
+        .setFooter({ text: `Hosted by ${message.author.username} • Ultimate Rewards` })
+        .setTimestamp();
+
+      const spinMsg = await message.reply({ embeds: [spinEmbed] });
+
+      await new Promise((r) => setTimeout(r, spinMs));
+
+      let rewardText = '';
+      let rewardKind = pool;
+
+      if (pool === 'custom') {
+        const item = data.customStock.shift();
+        data.customUsed.push({
+          item,
+          to: user.id,
+          by: message.author.id,
+          at: new Date().toISOString(),
+          type: 'daily'
+        });
+        saveData();
+        rewardText = item;
+      } else {
+        const account = data.mcfaStock.shift();
+        data.mcfaUsed.push({
+          account,
+          to: user.id,
+          by: message.author.id,
+          at: new Date().toISOString(),
+          type: 'daily'
+        });
+        saveData();
+        rewardText = account;
+      }
+
+      const resultEmbed = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('🎉 Daily Spin Result')
+        .setDescription(
+          `${user} won **${rewardKind === 'custom' ? 'CUSTOM' : 'MCFA'}**!\n\n` +
+            `Reward was sent to their **DMs**.\n` +
+            `Stock left — Custom: **${data.customStock.length}** · MCFA: **${data.mcfaStock.length}**`
+        )
+        .setFooter({ text: `Spun by ${message.author.username}` })
+        .setTimestamp();
+
+      await spinMsg.edit({ embeds: [resultEmbed] }).catch(() =>
+        message.channel.send({ embeds: [resultEmbed] })
+      );
+
+      const dmBody =
+        `# ARE WE LEGIT?\n` +
+        `-# vouch ${message.author.username} within this day or **1 week timeout**\n\n` +
+        `**Your daily reward (${rewardKind === 'custom' ? 'CUSTOM' : 'MCFA'}):**\n` +
+        `||${rewardText}||\n\n` +
+        `Please post a **vouch** for **${message.author}** today.\n` +
+        `Ignoring vouch may result in a **1 week timeout** (staff/admin enforced).\n\n` +
+        `— Ultimate Rewards`;
+
+      try {
+        await user.send(dmBody);
+      } catch (e) {
+        // restore stock
+        if (rewardKind === 'custom') {
+          data.customStock.unshift(rewardText);
+          data.customUsed.pop();
+        } else {
+          data.mcfaStock.unshift(rewardText);
+          data.mcfaUsed.pop();
+        }
+        saveData();
+        await message.channel.send(
+          `Could not DM ${user} (DMs closed). Reward **returned** to stock.`
+        );
+      }
+      return;
+    }
+
+    // ---- $daily @role [n] ----
+    const role =
+      message.mentions.roles.first() ||
+      message.guild.roles.cache.get((args[0] || '').replace(/[<@&>]/g, ''));
+
+    if (!role) {
+      return message.reply(
+        'Usage:\n' +
+          '`$daily @role 5` — pick **5** random members from role (pings you)\n' +
+          '`$daily pay @user` — spin daily reward (Custom 65% / MCFA 35%)'
+      );
+    }
+
+    let n = 1;
+    for (const a of args) {
+      if (/^\d+$/.test(a)) {
+        n = Math.min(25, Math.max(1, parseInt(a, 10)));
+        break;
+      }
+    }
+
+    try {
+      await message.guild.members.fetch();
+    } catch (_) {}
+
+    const pool = [...role.members.filter((m) => !m.user.bot).values()];
+    if (!pool.length) {
+      return message.reply(`No human members in **${role.name}**.`);
+    }
+
+    // shuffle
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const picked = pool.slice(0, Math.min(n, pool.length));
+
+    const lines = picked.map((m, i) => `\`#${i + 1}\` ${m} (\`${m.user.username}\`)`);
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle('🎲 Daily Random Pick')
+      .setDescription(
+        `Role: ${role}\n` +
+          `Requested: **${n}** · Picked: **${picked.length}**\n\n` +
+          lines.join('\n')
+      )
+      .setFooter({ text: `Drawn by ${message.author.username}` })
+      .setTimestamp();
+
+    return message.reply({
+      content: `${message.author} — your daily picks: ${picked.map((m) => m.toString()).join(' ')}`,
+      embeds: [embed]
+    });
+  }
+
+
   // ========== $help ==========
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
@@ -2181,6 +2366,8 @@ if (sub === 'clear') {
           '**Staff Management**',
           '$staffstats` — premium staff team overview',
           '`$claim` — claim invite reward (in tickets)',
+          '`$daily @role N` — random pick from role *(Head Admin+)*',
+          '`$daily pay @user` — daily spin Custom/MCFA *(Head Admin+)*',
           '`$online @role` — show online members in a role',
           '`$count #channel` — enable counting game',
           '`$count status` — counting status',

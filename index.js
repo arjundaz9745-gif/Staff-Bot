@@ -39,6 +39,91 @@ const MASS_PING_LIMIT = 3;          // same user mentioned this many times
 const MASS_PING_WINDOW_MS = 15000;  // within 15 seconds
 const MASS_PING_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
+
+// Product stock keys (Ultimate multi-stock)
+const PRODUCT_STOCKS = {
+  mcfa: { label: 'MCFA', emoji: '🟩', cmd: ['mcfa'] },
+  donut: { label: 'DONUT', emoji: '🍩', cmd: ['donut'] },
+  hypixel: { label: 'HYPIXEL', emoji: '⚔️', cmd: ['hypixel', 'hyp'] },
+  nitro: { label: 'NITRO', emoji: '💜', cmd: ['nitro'] },
+  netflix: { label: 'NETFLIX', emoji: '🎬', cmd: ['netflix'] },
+  steam: { label: 'STEAM', emoji: '🎮', cmd: ['steam'] },
+  crunchyroll: { label: 'CRUNCHYROLL', emoji: '🍥', cmd: ['crunchyroll', 'cruncyroll', 'cr'] },
+  xbox: { label: 'XBOX', emoji: '🎮', cmd: ['xbox'] },
+  custom: { label: 'CUSTOM', emoji: '📦', cmd: ['custom'] }
+};
+
+const VOUCH_CHANNEL_ID = process.env.VOUCH_CHANNEL_ID || '1547183217449242644';
+const PROOF_CHANNEL_ID = process.env.PROOF_CHANNEL_ID || '1547183218875301968';
+const SALARY_ADD_CHANNEL_ID = process.env.SALARY_ADD_CHANNEL_ID || '1547183228115222549';
+const BIRTHDAY_USER_ID = '1398979148063571989';
+const STAFF_APPLY_PING_ROLES = [OWNER_ROLE_ID, CO_OWNER_ROLE_ID].filter(Boolean);
+
+function ensureStocks(d) {
+  if (!d.stocks || typeof d.stocks !== 'object') d.stocks = {};
+  for (const key of Object.keys(PRODUCT_STOCKS)) {
+    if (!Array.isArray(d.stocks[key])) d.stocks[key] = [];
+  }
+  // migrate legacy
+  if (Array.isArray(d.mcfaStock) && d.mcfaStock.length && d.stocks.mcfa.length === 0) {
+    d.stocks.mcfa = d.mcfaStock.slice();
+  }
+  if (Array.isArray(d.customStock) && d.customStock.length && d.stocks.custom.length === 0) {
+    d.stocks.custom = d.customStock.slice();
+  }
+  d.mcfaStock = d.stocks.mcfa;
+  d.customStock = d.stocks.custom;
+  if (!d.staffApplyOpen) d.staffApplyOpen = true;
+  if (!d.staffApplications) d.staffApplications = {};
+  return d;
+}
+
+function getStock(key) {
+  ensureStocks(data);
+  return data.stocks[key] || [];
+}
+
+function setStock(key, arr) {
+  ensureStocks(data);
+  data.stocks[key] = arr;
+  if (key === 'mcfa') data.mcfaStock = arr;
+  if (key === 'custom') data.customStock = arr;
+}
+
+function resolveProductKey(name) {
+  const n = String(name || '').toLowerCase();
+  for (const [key, meta] of Object.entries(PRODUCT_STOCKS)) {
+    if (key === n || meta.cmd.includes(n) || meta.label.toLowerCase() === n) return key;
+  }
+  return null;
+}
+
+function buildStockListEmbed() {
+  ensureStocks(data);
+  const lines = Object.entries(PRODUCT_STOCKS).map(([key, meta]) => {
+    const n = (data.stocks[key] || []).length;
+    return `${meta.emoji} **${meta.label}**  |  \`${n}\``;
+  });
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('📦 CURRENT STOCK STATUS')
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'USE $BUY <PRODUCT> OR $PAY / $<product> @user — Ultimate Rewards' })
+    .setTimestamp();
+}
+
+function isTicketChannel(ch) {
+  if (!ch || !ch.name) return false;
+  const name = ch.name.toLowerCase();
+  return (
+    name.startsWith('ticket') ||
+    name.startsWith('claim') ||
+    name.includes('ticket') ||
+    (TICKET_CATEGORY_ID && ch.parentId === TICKET_CATEGORY_ID)
+  );
+}
+
+
 const DATA_PATH = process.env.RENDER
   ? path.join('/tmp', 'best-bot-data.json')
   : path.join(__dirname, 'data.json');
@@ -72,6 +157,9 @@ function loadData() {
       if (!d.teamups) d.teamups = {};
       if (!Array.isArray(d.hits)) d.hits = [];
       if (!d.exportCounts) d.exportCounts = { mcfa: 0, custom: 0, hits: 0 };
+      ensureStocks(d);
+      if (typeof d.staffApplyOpen !== 'boolean') d.staffApplyOpen = true;
+      if (!d.staffApplications) d.staffApplications = {};
       return d;
     }
   } catch (e) {
@@ -90,8 +178,12 @@ function loadData() {
     counting: {},
     teamups: {},
     hits: [],
-    exportCounts: { mcfa: 0, custom: 0, hits: 0 }
+    exportCounts: { mcfa: 0, custom: 0, hits: 0 },
+    stocks: {},
+    staffApplyOpen: true,
+    staffApplications: {}
   };
+  // note: ensureStocks applied after load below
 }
 
 function saveData() {
@@ -103,6 +195,7 @@ function saveData() {
 }
 
 let data = loadData();
+ensureStocks(data);
 
 // In-memory anti-raid trackers (reset on restart – fine for short windows)
 const recentMentions = new Map(); // key: `${authorId}:${targetId}` → timestamps[]
@@ -596,6 +689,121 @@ function ultimateFaqReply(text) {
 }
 
 
+
+async function deliverProductWithVouch(message, user, productKey, items, skipVouch) {
+  const meta = PRODUCT_STOCKS[productKey] || { label: productKey, emoji: '📦' };
+  const staff = message.author;
+  const list = Array.isArray(items) ? items : [items];
+
+  let dm =
+    `**Ultimate Rewards — ${meta.label} delivery**\n` +
+    `You received **${list.length}** item(s):\n\n`;
+  list.forEach((it, i) => {
+    dm += `**#${i + 1}** ||${it}||\n`;
+  });
+  dm += `\nDelivered by ${staff.username}.\n\n`;
+
+  if (skipVouch) {
+    dm += `Thank you!`;
+    await user.send(dm);
+    return true;
+  }
+
+  dm +=
+    `# ARE WE LEGIT?\n` +
+    `Reply with **yes** or **no** in this DM.\n` +
+    `- **yes** → we post a vouch & proof\n` +
+    `- **no** → send login issue screenshot in your ticket and ping the staff who paid you\n` +
+    `-# Not replying within **24 hours** may result in a **1 week timeout**.`;
+
+  try {
+    await user.send(dm);
+  } catch (e) {
+    return false;
+  }
+
+  // Collect yes/no in DM for 24h
+  const dmCh = await user.createDM();
+  const collector = dmCh.createMessageCollector({
+    filter: (m) => m.author.id === user.id && !m.author.bot,
+    time: 24 * 60 * 60 * 1000,
+    max: 5
+  });
+
+  collector.on('collect', async (m) => {
+    const ans = m.content.trim().toLowerCase();
+    if (ans === 'yes' || ans === 'y') {
+      collector.stop('yes');
+      await m.reply(
+        `Thanks! Please also post a public vouch for **${staff.username}** if you can.\n` +
+          `We're logging this as a successful delivery.`
+      ).catch(() => {});
+
+      // Vouch channel
+      try {
+        const vouchCh = message.guild.channels.cache.get(VOUCH_CHANNEL_ID);
+        if (vouchCh) {
+          await vouchCh.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x57f287)
+                .setTitle('✅ Customer confirmed — LEGIT')
+                .setDescription(
+                  `**Customer:** ${user}\n**Staff:** ${staff}\n**Product:** ${meta.emoji} **${meta.label}** ×${list.length}\n**Reply:** yes`
+                )
+                .setTimestamp()
+            ]
+          });
+        }
+      } catch (_) {}
+
+      // Proof channel with spoilers
+      try {
+        const proofCh = message.guild.channels.cache.get(PROOF_CHANNEL_ID);
+        if (proofCh) {
+          const spoilers = list.map((x) => `||${x}||`).join('\n');
+          await proofCh.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x5865f2)
+                .setTitle('📎 Delivery proof')
+                .setDescription(
+                  `**Staff:** ${staff}\n**User:** ${user}\n**Product:** ${meta.label} ×${list.length}\n\n${spoilers}`
+                )
+                .setTimestamp()
+            ]
+          });
+        }
+      } catch (_) {}
+    } else if (ans === 'no' || ans === 'n') {
+      collector.stop('no');
+      await m.reply(
+        `**Ok. Send your login issue screenshot in your ticket please! And ping ${staff}.**`
+      ).catch(() => {});
+      try {
+        await message.channel.send(
+          `${staff} — ${user} replied **no** on delivery. They should send a screenshot in the ticket.`
+        );
+      } catch (_) {}
+    } else {
+      await m.reply('Please reply **yes** or **no**.').catch(() => {});
+    }
+  });
+
+  return true;
+}
+
+async function takeFromStock(productKey, amount) {
+  ensureStocks(data);
+  const arr = data.stocks[productKey] || [];
+  if (arr.length < amount) return null;
+  const taken = arr.splice(0, amount);
+  setStock(productKey, arr);
+  saveData();
+  return taken;
+}
+
+
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
@@ -780,7 +988,87 @@ client.on('messageCreate', async (message) => {
   // $mcfa list         → paste available as ||mail:pass|| (staff, in channel)
   // $mcfa add ...      → add accounts (staff)
   // $stock ...         → same aliases
-  if (cmd === 'mcfa' || cmd === 'stock') {
+  if (cmd === 'stock') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const sub = (args[0] || '').toLowerCase();
+    if (!sub || sub === 'list' || sub === 'status') {
+      return message.reply({ embeds: [buildStockListEmbed()] });
+    }
+    return message.reply('`$stock list` — show all product stock counts');
+  }
+
+  // Generic product stock: $mcfa / $crunchyroll / $xbox / $netflix / $hypixel / $donut / $nitro / $steam
+  if (resolveProductKey(cmd) && cmd !== 'custom') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const productKey = resolveProductKey(cmd);
+    const meta = PRODUCT_STOCKS[productKey];
+    const sub = (args[0] || '').toLowerCase();
+    ensureStocks(data);
+
+    if (!sub || sub === 'count' || sub === 'left') {
+      return message.reply(
+        `${meta.emoji} **${meta.label}** stock: **${getStock(productKey).length}**`
+      );
+    }
+    if (sub === 'list' || sub === 'paste') {
+      const stock = getStock(productKey);
+      if (!stock.length) return message.reply(`No **${meta.label}** stock.`);
+      const spoilers = stock.map((a) => `||${a}||`);
+      const chunks = [];
+      let buf = `**${meta.label} stock (${stock.length})**\n`;
+      for (const s of spoilers) {
+        if ((buf + s + '\n').length > 1900) {
+          chunks.push(buf);
+          buf = '';
+        }
+        buf += s + '\n';
+      }
+      if (buf.trim()) chunks.push(buf);
+      for (const c of chunks) await message.channel.send(c);
+      return;
+    }
+    if (sub === 'add') {
+      const rest = body.slice(body.toLowerCase().indexOf('add') + 3).trim();
+      const accounts = parseAccounts(rest).length
+        ? parseAccounts(rest)
+        : rest.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+      if (!accounts.length) {
+        return message.reply(`Usage: \`$${cmd} add <item>\` (multiple OK)`);
+      }
+      let added = 0;
+      const arr = getStock(productKey);
+      for (const a of accounts) {
+        if (!arr.includes(a)) {
+          arr.push(a);
+          added++;
+        }
+      }
+      setStock(productKey, arr);
+      saveData();
+      return message.reply(
+        `Added **${added}** to **${meta.label}** · Stock now **${arr.length}**`
+      );
+    }
+    if (sub === 'clear') {
+      const n = getStock(productKey).length;
+      setStock(productKey, []);
+      saveData();
+      return message.reply(`Cleared **${n}** from **${meta.label}**.`);
+    }
+    if (sub === 'export') {
+      return exportStockToChannel(
+        message,
+        productKey,
+        getStock(productKey),
+        meta.label
+      );
+    }
+    return message.reply(
+      `**${meta.label}**\n\`$${cmd}\` · \`$${cmd} list\` · \`$${cmd} add\` · \`$${cmd} clear\` · \`$${cmd} export #ch\``
+    );
+  }
+
+  if (cmd === 'mcfa_legacy_disabled_placeholder') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
 
     const sub = (args[0] || '').toLowerCase();
@@ -862,7 +1150,11 @@ if (sub === 'clear') {
     );
   }
 
-  // ========== $pay @user [amount] ==========
+  // ========== $pay @user [product] [amount] ==========
+  // $pay @user → 1 mcfa
+  // $pay @user 5 → 5 mcfa
+  // $pay @user netflix 2 → 2 netflix
+  // $crunchyroll @user 1 also works via product cmds below
   if (cmd === 'pay') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
 
@@ -871,63 +1163,78 @@ if (sub === 'clear') {
       (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null)));
 
     if (!user || user.bot) {
-      return message.reply('Usage: `$pay @user` or `$pay @user 10` — DM MCFA from stock');
+      return message.reply(
+        'Usage: `$pay @user` · `$pay @user 5` · `$pay @user netflix 2`\n' +
+          'Products: mcfa, donut, hypixel, nitro, netflix, steam, crunchyroll, xbox, custom'
+      );
     }
 
+    let productKey = 'mcfa';
     let amount = 1;
     for (const a of args) {
       if (/^\d+$/.test(a)) {
-        amount = Math.min(25, Math.max(1, parseInt(a, 10)));
-        break;
+        amount = Math.min(50, Math.max(1, parseInt(a, 10)));
+        continue;
       }
+      const pk = resolveProductKey(a);
+      if (pk) productKey = pk;
     }
 
-    if (data.mcfaStock.length < amount) {
+    const meta = PRODUCT_STOCKS[productKey];
+    const taken = await takeFromStock(productKey, amount);
+    if (!taken) {
       return message.reply(
-        `Not enough stock. Need **${amount}**, have **${data.mcfaStock.length}**.`
+        `Not enough **${meta.label}**. Need **${amount}**, have **${getStock(productKey).length}**.`
       );
     }
 
-    const sent = [];
-    for (let i = 0; i < amount; i++) {
-      const account = data.mcfaStock.shift();
-      data.mcfaUsed.push({
-        account,
-        to: user.id,
-        by: message.author.id,
-        at: new Date().toISOString()
-      });
-      sent.push(account);
-    }
-    saveData();
-
-    try {
-      let dm =
-        `**Ultimate Rewards — MCFA delivery**\n` +
-        `You received **${sent.length}** account(s). Click spoilers to reveal:\n\n`;
-      sent.forEach((acc, i) => {
-        dm += `**#${i + 1}** ||${acc}||\n`;
-      });
-      dm += `\nDelivered by staff. Do not share.`;
-      await user.send(dm);
-      return message.reply(
-        `Paid **${sent.length}** MCFA to ${user} via DM · Stock left: **${data.mcfaStock.length}**`
-      );
-    } catch (e) {
-      for (let i = sent.length - 1; i >= 0; i--) {
-        data.mcfaStock.unshift(sent[i]);
-        data.mcfaUsed.pop();
-      }
+    const ok = await deliverProductWithVouch(message, user, productKey, taken, false);
+    if (!ok) {
+      // restore
+      const arr = getStock(productKey);
+      arr.unshift(...taken);
+      setStock(productKey, arr);
       saveData();
-      return message.reply(
-        `Could not DM ${user} (DMs closed). Accounts were **not** taken from stock.`
-      );
+      return message.reply(`Could not DM ${user}. Stock restored.`);
     }
+    return message.reply(
+      `Paid **${taken.length}× ${meta.emoji} ${meta.label}** to ${user} · left **${getStock(productKey).length}** · waiting **yes/no** in DM`
+    );
   }
 
   // ========== $salary @user [amount] ==========
   // Only usable by user ID 1398979148063571989 or members with role 1547183159794204675
   if (cmd === 'salary') {
+    // $salary add — owners only, locked channel
+    if ((args[0] || '').toLowerCase() === 'add') {
+      const allowed =
+        message.author.id === BIRTHDAY_USER_ID || isCoOwnerOrAbove(message.member);
+      if (!allowed) return message.reply('Owners only.');
+      if (String(message.channel.id) !== String(SALARY_ADD_CHANNEL_ID)) {
+        return message.reply(`Use this only in <#${SALARY_ADD_CHANNEL_ID}>.`);
+      }
+      const rest = body.slice(body.toLowerCase().indexOf('add') + 3).trim();
+      if (!rest) return message.reply('Usage: `$salary add email:pass`');
+      const items = parseAccounts(rest).length
+        ? parseAccounts(rest)
+        : rest.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+      ensureStocks(data);
+      const arr = getStock('mcfa');
+      for (const it of items) {
+        if (!arr.includes(it)) arr.push(it);
+      }
+      setStock('mcfa', arr);
+      saveData();
+      const reply = await message.reply(
+        `Added **${items.length}** salary reward(s) · pool **${arr.length}**`
+      );
+      setTimeout(() => {
+        message.delete().catch(() => {});
+        reply.delete().catch(() => {});
+      }, 3000);
+      return;
+    }
+
     const ALLOWED_USER_ID = '1398979148063571989';
     const ALLOWED_ROLE_ID = '1547183159794204675';
 
@@ -1746,6 +2053,9 @@ if (sub === 'clear') {
   // ========== $claim ==========
   // In a ticket: show eligible rewards based on invites, then ping online staff
   if (cmd === 'claim') {
+    if (!isTicketChannel(message.channel)) {
+      return message.reply('`$claim` only works **inside tickets**.');
+    }
     await startRewardClaimFlow(message.channel, message.author);
     return;
   }
@@ -2179,16 +2489,18 @@ if (sub === 'clear') {
         return message.reply('Usage: `$daily pay @user`');
       }
 
-      const hasCustom = (data.customStock || []).length > 0;
-      const hasMcfa = (data.mcfaStock || []).length > 0;
-      if (!hasCustom && !hasMcfa) {
-        return message.reply('No **custom** or **MCFA** stock left for daily pay.');
+      ensureStocks(data);
+      const available = Object.keys(PRODUCT_STOCKS).filter((k) => getStock(k).length > 0);
+      if (!available.length) {
+        return message.reply('No stock left in any product for daily pay.');
       }
-
-      // Weighted: 65% custom, 35% MCFA (if that stock empty, use the other)
-      let pool = Math.random() < 0.65 ? 'custom' : 'mcfa';
-      if (pool === 'custom' && !hasCustom) pool = 'mcfa';
-      if (pool === 'mcfa' && !hasMcfa) pool = 'custom';
+      // Prefer custom if present (65%), else random among available
+      let pool;
+      if (available.includes('custom') && Math.random() < 0.65) {
+        pool = 'custom';
+      } else {
+        pool = available[Math.floor(Math.random() * available.length)];
+      }
 
       const spinMs = 5000 + Math.floor(Math.random() * 3001); // 5–8s
       const spinEmbed = new EmbedBuilder()
@@ -2206,40 +2518,20 @@ if (sub === 'clear') {
 
       await new Promise((r) => setTimeout(r, spinMs));
 
-      let rewardText = '';
-      let rewardKind = pool;
-
-      if (pool === 'custom') {
-        const item = data.customStock.shift();
-        data.customUsed.push({
-          item,
-          to: user.id,
-          by: message.author.id,
-          at: new Date().toISOString(),
-          type: 'daily'
-        });
-        saveData();
-        rewardText = item;
-      } else {
-        const account = data.mcfaStock.shift();
-        data.mcfaUsed.push({
-          account,
-          to: user.id,
-          by: message.author.id,
-          at: new Date().toISOString(),
-          type: 'daily'
-        });
-        saveData();
-        rewardText = account;
+      const taken = await takeFromStock(pool, 1);
+      if (!taken) {
+        return message.reply('Stock changed during spin — try again.');
       }
+      const rewardText = taken[0];
+      const meta = PRODUCT_STOCKS[pool];
 
       const resultEmbed = new EmbedBuilder()
         .setColor(0x57f287)
         .setTitle('🎉 Daily Spin Result')
         .setDescription(
-          `${user} won **${rewardKind === 'custom' ? 'CUSTOM' : 'MCFA'}**!\n\n` +
-            `Reward was sent to their **DMs**.\n` +
-            `Stock left — Custom: **${data.customStock.length}** · MCFA: **${data.mcfaStock.length}**`
+          `${user} won **${meta.emoji} ${meta.label}**!\n\n` +
+            `Reward sent to **DMs** (yes/no confirm).\n` +
+            `Left in that stock: **${getStock(pool).length}**`
         )
         .setFooter({ text: `Spun by ${message.author.username}` })
         .setTimestamp();
@@ -2248,26 +2540,11 @@ if (sub === 'clear') {
         message.channel.send({ embeds: [resultEmbed] })
       );
 
-      const dmBody =
-        `# ARE WE LEGIT?\n` +
-        `-# vouch ${message.author.username} within this day or **1 week timeout**\n\n` +
-        `**Your daily reward (${rewardKind === 'custom' ? 'CUSTOM' : 'MCFA'}):**\n` +
-        `||${rewardText}||\n\n` +
-        `Please post a **vouch** for **${message.author}** today.\n` +
-        `Ignoring vouch may result in a **1 week timeout** (staff/admin enforced).\n\n` +
-        `— Ultimate Rewards`;
-
-      try {
-        await user.send(dmBody);
-      } catch (e) {
-        // restore stock
-        if (rewardKind === 'custom') {
-          data.customStock.unshift(rewardText);
-          data.customUsed.pop();
-        } else {
-          data.mcfaStock.unshift(rewardText);
-          data.mcfaUsed.pop();
-        }
+      const ok = await deliverProductWithVouch(message, user, pool, taken, false);
+      if (!ok) {
+        const arr = getStock(pool);
+        arr.unshift(rewardText);
+        setStock(pool, arr);
         saveData();
         await message.channel.send(
           `Could not DM ${user} (DMs closed). Reward **returned** to stock.`
@@ -2332,6 +2609,167 @@ if (sub === 'clear') {
   }
 
 
+
+  // ========== $birthday gift send @user (owner only) ==========
+  if (cmd === 'birthday') {
+    if (message.author.id !== BIRTHDAY_USER_ID) {
+      return message.reply('Only the designated owner can use birthday gifts.');
+    }
+    const sub = (args[0] || '').toLowerCase();
+    if (sub !== 'gift') {
+      return message.reply('Usage: `$birthday gift @user` or `$birthday gift send @user`');
+    }
+    const user =
+      message.mentions.users.first() ||
+      (args[1] && args[1].toLowerCase() === 'send'
+        ? message.mentions.users.first()
+        : null) ||
+      (args[2] && (await client.users.fetch(args[2].replace(/[<@!>]/g, '')).catch(() => null))) ||
+      (args[1] && (await client.users.fetch(args[1].replace(/[<@!>]/g, '')).catch(() => null)));
+
+    if (!user || user.bot) {
+      return message.reply('Usage: `$birthday gift @user`');
+    }
+
+    // Prefer custom, else any available stock
+    ensureStocks(data);
+    let key = getStock('custom').length ? 'custom' : null;
+    if (!key) {
+      const avail = Object.keys(PRODUCT_STOCKS).filter((k) => getStock(k).length);
+      key = avail[0] || null;
+    }
+    if (!key) return message.reply('No stock available for a birthday gift.');
+    const taken = await takeFromStock(key, 1);
+    const ok = await deliverProductWithVouch(message, user, key, taken, true);
+    if (!ok) {
+      getStock(key).unshift(taken[0]);
+      setStock(key, getStock(key));
+      saveData();
+      return message.reply('Could not DM them — gift restored to stock.');
+    }
+    return message.reply(
+      `🎂 Birthday gift (**${PRODUCT_STOCKS[key].label}**) sent to ${user}!`
+    );
+  }
+
+  // ========== $staff apply / OPEN / CLOSED ==========
+  if (cmd === 'staff') {
+    const sub = (args[0] || '').toLowerCase();
+
+    if (sub === 'apply') {
+      const mode = (args[1] || '').toLowerCase();
+
+      if (mode === 'closed') {
+        if (!isStaff(message.member)) return message.reply('Staff only.');
+        data.staffApplyOpen = false;
+        saveData();
+        return message.reply('🔒 **Staff applications are now CLOSED.**');
+      }
+      if (mode === 'open') {
+        if (!isStaff(message.member)) return message.reply('Staff only.');
+        data.staffApplyOpen = true;
+        saveData();
+        return message.reply('🔓 **Staff applications are now OPEN.**');
+      }
+
+      // user applying
+      if (!isTicketChannel(message.channel)) {
+        return message.reply('`$staff apply` only works **inside a ticket**.');
+      }
+      if (!data.staffApplyOpen) {
+        return message.reply('**Staff apply is currently closed !**');
+      }
+
+      const questions = [
+        'How long have you been in Ultimate Rewards?',
+        'Why do you want to become staff?',
+        'What makes you a good fit for the staff team?',
+        'Have you had any previous staff experience?',
+        'How active are you on Discord?',
+        'How would you handle someone breaking the rules?',
+        'What would you do if two members were arguing?',
+        'How would you handle a friend breaking the rules?',
+        'How would you deal with a difficult or disrespectful member?',
+        'Why should we choose you as a staff member?',
+        'Full form of MCFA, SMFA, NFA, FA?',
+        'Will you use stocks as your salary?'
+      ];
+
+      await message.reply(
+        '📋 **Staff Application** — answer each question in this ticket.\n' +
+          'Type `cancel` anytime to stop.'
+      );
+
+      const answers = [];
+      for (let i = 0; i < questions.length; i++) {
+        await message.channel.send(`**${i + 1}/${questions.length}.** ${questions[i]}`);
+        const collected = await message.channel
+          .awaitMessages({
+            filter: (m) => m.author.id === message.author.id && !m.author.bot,
+            max: 1,
+            time: 10 * 60 * 1000
+          })
+          .catch(() => null);
+        if (!collected || !collected.size) {
+          await message.channel.send('Timed out. Run `$staff apply` again when ready.');
+          return;
+        }
+        const ans = collected.first().content.trim();
+        if (ans.toLowerCase() === 'cancel') {
+          await message.channel.send('Application cancelled.');
+          return;
+        }
+        answers.push({ q: questions[i], a: ans });
+      }
+
+      const appId = `${message.author.id}-${Date.now()}`;
+      if (!data.staffApplications) data.staffApplications = {};
+      data.staffApplications[appId] = {
+        userId: message.author.id,
+        at: new Date().toISOString(),
+        answers
+      };
+      saveData();
+
+      const summary = answers
+        .map((x, i) => `**${i + 1}.** ${x.q}\n> ${x.a}`)
+        .join('\n\n');
+      const embed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle('📨 Staff Application Submitted')
+        .setDescription(summary.slice(0, 4000))
+        .setFooter({ text: message.author.tag })
+        .setTimestamp();
+
+      await message.channel.send({ embeds: [embed] });
+
+      // Ping online co-owner+
+      try {
+        await message.guild.members.fetch();
+      } catch (_) {}
+      const onlineStaff = message.guild.members.cache.filter((m) => {
+        if (m.user.bot) return false;
+        if (!isCoOwnerOrAbove(m)) return false;
+        const s = m.presence?.status;
+        return s && ['online', 'idle', 'dnd'].includes(s);
+      });
+      const pings = onlineStaff.size
+        ? [...onlineStaff.values()].slice(0, 15).map((m) => `<@${m.id}>`).join(' ')
+        : (CO_OWNER_ROLE_ID ? `<@&${CO_OWNER_ROLE_ID}>` : '@staff');
+
+      await message.channel.send(
+        `${pings}\n${message.author}'s **staff apply** questions are ready...`
+      );
+      return;
+    }
+
+    return message.reply(
+      '`$staff apply` — apply in a ticket\n' +
+        '`$staff apply OPEN` / `$staff apply CLOSED` — staff toggle'
+    );
+  }
+
+
   // ========== $help ==========
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
@@ -2348,7 +2786,12 @@ if (sub === 'clear') {
           '`$mcfa add mail:pass` — add accounts',
           '`$mcfa clear` or `$clear` — clear MCFA stock',
           '`$mcfa export #channel` — upload export_N.txt of stock',
-          '`$pay @user` / `$pay @user 10` — DM MCFA from stock',
+                    '`$stock list` — all product counts (emoji UI)',
+          '`$mcfa/$donut/$hypixel/$nitro/$netflix/$steam/$crunchyroll/$xbox` — stock cmds',
+          '`$pay @user [product] [n]` — pay + yes/no vouch flow',
+          '`$staff apply` · OPEN/CLOSED — staff applications (tickets)',
+          '`$birthday gift @user` — owner only',
+          '`$pay @user` / `$pay @user netflix 2` — pay with vouch flow',
           '`$hit add hypixel/donut/both` · `$hit start/stop/list/export` — hits',
           '',
           '**Salary**',

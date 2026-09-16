@@ -57,6 +57,7 @@ const VOUCH_CHANNEL_ID = process.env.VOUCH_CHANNEL_ID || '1547183217449242644';
 const PROOF_CHANNEL_ID = process.env.PROOF_CHANNEL_ID || '1547183218875301968';
 const SALARY_ADD_CHANNEL_ID = process.env.SALARY_ADD_CHANNEL_ID || '1547183228115222549';
 const BIRTHDAY_USER_ID = '1398979148063571989';
+const FALCON_BOT_ID = process.env.FALCON_BOT_ID || '899899858981371935'; // Falcon™
 const STAFF_APPLY_PING_ROLES = [OWNER_ROLE_ID, CO_OWNER_ROLE_ID].filter(Boolean);
 
 function ensureStocks(d) {
@@ -160,6 +161,7 @@ function loadData() {
       ensureStocks(d);
       if (typeof d.staffApplyOpen !== 'boolean') d.staffApplyOpen = true;
       if (!d.staffApplications) d.staffApplications = {};
+      if (!d.falconInvites) d.falconInvites = {};
       return d;
     }
   } catch (e) {
@@ -305,6 +307,54 @@ const REWARD_TIERS = [
 function getUserInvites(guildId, userId) {
   return data.invites[guildId]?.[userId] || 0;
 }
+
+/** Parse Falcon -i / invites reply → { userId?, count } */
+function parseFalconInvites(msg) {
+  if (!msg || msg.author?.id !== FALCON_BOT_ID) return null;
+  const text = [
+    msg.content || '',
+    ...(msg.embeds || []).flatMap((e) => [
+      e.title || '',
+      e.description || '',
+      ...(e.fields || []).map((f) => `${f.name} ${f.value}`)
+    ])
+  ].join('\n');
+
+  // "Name has 5 invites" or "has total of 42 invites"
+  let count = null;
+  let m =
+    text.match(/has\s+total\s+of\s+(\d+)\s+invites/i) ||
+    text.match(/has\s+(\d+)\s+invites/i) ||
+    text.match(/\*\*[^*]+\s+has\s+(\d+)\s+invites/i) ||
+    text.match(/(\d+)\s+invites\s*\|/i);
+  if (m) count = parseInt(m[1], 10);
+  if (count === null || Number.isNaN(count)) return null;
+
+  // Prefer mentioned user (Falcon often mentions the target)
+  let userId =
+    msg.mentions?.users?.first()?.id ||
+    null;
+  // From <@id> in text
+  if (!userId) {
+    const um = text.match(/<@!?(\d{15,20})>/);
+    if (um) userId = um[1];
+  }
+  return { userId, count, raw: text.slice(0, 200) };
+}
+
+function setFalconInvites(guildId, userId, count) {
+  if (!guildId || !userId) return;
+  if (!data.invites[guildId]) data.invites[guildId] = {};
+  data.invites[guildId][userId] = Math.max(0, count);
+  if (!data.falconInvites) data.falconInvites = {};
+  if (!data.falconInvites[guildId]) data.falconInvites[guildId] = {};
+  data.falconInvites[guildId][userId] = {
+    count,
+    at: new Date().toISOString()
+  };
+  saveData();
+}
+
 
 function getEligibleRewards(inviteCount) {
   return REWARD_TIERS.filter((r) => inviteCount >= r.invites);
@@ -739,36 +789,16 @@ async function deliverProductWithVouch(message, user, productKey, items, skipVou
           `We're logging this as a successful delivery.`
       ).catch(() => {});
 
-      // Vouch channel — LEGIT only (NO credentials)
-      try {
-        const vouchCh = message.guild.channels.cache.get(VOUCH_CHANNEL_ID);
-        if (vouchCh) {
-          await vouchCh.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x57f287)
-                .setTitle('✅ LEGIT')
-                .setDescription(
-                  `**Customer:** ${user}\n**Staff:** ${staff}\n**Product:** ${meta.emoji} **${meta.label}** ×${list.length}`
-                )
-                .setTimestamp()
-            ]
-          });
-        }
-      } catch (_) {}
-
-      // Proof channel — same vouch text + spoilers in MESSAGE CONTENT only
-      // (Discord embeds do NOT hide ||spoilers|| — they leak as plain text)
+      // Proof channel ONLY — LEGIT record (never credentials, never auto-post in vouch)
       try {
         const proofCh = message.guild.channels.cache.get(PROOF_CHANNEL_ID);
         if (proofCh) {
-          const spoilers = list.map((x) => `||${x}||`).join('\n');
           await proofCh.send(
             `✅ **LEGIT**\n` +
               `**Customer:** ${user}\n` +
               `**Staff:** ${staff}\n` +
-              `**Product:** ${meta.emoji} **${meta.label}** ×${list.length}\n\n` +
-              spoilers
+              `**Product:** ${meta.emoji} **${meta.label}** ×${list.length}\n` +
+              `-# Account stays private with the customer — not posted here.`
           );
         }
       } catch (_) {}
@@ -802,7 +832,44 @@ async function takeFromStock(productKey, amount) {
 
 
 client.on('messageCreate', async (message) => {
-  if (!message.guild || message.author.bot) return;
+  if (!message.guild) return;
+
+  // ========== Falcon -i invite sync ==========
+  if (message.author.bot && message.author.id === FALCON_BOT_ID) {
+    try {
+      const parsed = parseFalconInvites(message);
+      if (parsed && parsed.count !== null) {
+        let uid = parsed.userId;
+        // If Falcon didn't mention user, try reference (reply to -i command)
+        if (!uid && message.reference?.messageId) {
+          const ref = await message.channel.messages
+            .fetch(message.reference.messageId)
+            .catch(() => null);
+          if (ref) {
+            uid =
+              ref.mentions?.users?.first()?.id ||
+              ref.author?.id ||
+              null;
+            // -i @user → mention; -i alone → author
+            if (ref.content && /^[-/]?i(nvites)?/i.test(ref.content.trim())) {
+              uid = ref.mentions?.users?.first()?.id || ref.author.id;
+            }
+          }
+        }
+        if (uid) {
+          setFalconInvites(message.guild.id, uid, parsed.count);
+          console.log(
+            `Falcon sync: ${uid} → ${parsed.count} invites in ${message.guild.id}`
+          );
+        }
+      }
+    } catch (e) {
+      console.error('Falcon parse:', e.message);
+    }
+    return;
+  }
+
+  if (message.author.bot) return;
 
   addMessage(message.guild.id, message.author.id);
 
@@ -815,18 +882,42 @@ client.on('messageCreate', async (message) => {
   } catch (_) {}
 
 
-  // ========== @Bot FAQ AI ==========
+  // ========== @Bot FAQ AI (only direct @bot — not @everyone / @roles) ==========
   try {
-    if (client.user && message.mentions.has(client.user) && !message.author.bot) {
+    if (
+      client.user &&
+      !message.author.bot &&
+      message.mentions.users.has(client.user.id) &&
+      !message.mentions.everyone
+    ) {
+      // Ignore pure role mass-pings that also happen to list the bot somehow
       const cleaned = message.content
         .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
+        .replace(/<@&\d+>/g, '')
+        .replace(/@everyone/gi, '')
+        .replace(/@here/gi, '')
         .trim();
+      // If after stripping mentions there's nothing useful and they only mass-pinged, skip
+      if (!cleaned && (message.mentions.roles.size > 0 || message.content.includes('@everyone'))) {
+        // still allow empty → help only when bot was intentionally pinged alone-ish
+      }
       const reply = ultimateFaqReply(cleaned || 'help');
       await message.reply(reply).catch(() => {});
     }
   } catch (e) {
     console.error('faq:', e.message);
   }
+
+  // ========== Vouch channel auto-thanks ==========
+  try {
+    if (
+      String(message.channel.id) === String(VOUCH_CHANNEL_ID) &&
+      !message.author.bot &&
+      /\b(got|vouch|legit)\b/i.test(message.content)
+    ) {
+      await message.reply('***Thanks for vouching ❤️***').catch(() => {});
+    }
+  } catch (_) {}
 
   // ========== ANTI MASS-PING ==========
   // If the same user is mentioned 3+ times quickly by one person → 3 day timeout
@@ -2766,6 +2857,188 @@ if (sub === 'clear') {
     );
   }
 
+
+
+  // ========== $settings export / import (messages + invites backup) ==========
+  if (cmd === 'settings' || cmd === 'setting' || cmd === 'settungs') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const sub = (args[0] || '').toLowerCase();
+    const gid = message.guild.id;
+
+    if (sub === 'export') {
+      const ch =
+        message.mentions.channels.first() ||
+        message.guild.channels.cache.get((args[1] || '').replace(/[<#>]/g, '')) ||
+        message.channel;
+
+      if (!ch || !ch.isTextBased?.()) {
+        return message.reply('Usage: `$settings export #channel`');
+      }
+
+      if (!data.exportCounts) data.exportCounts = { mcfa: 0, custom: 0, hits: 0, settings: 0 };
+      data.exportCounts.settings = (data.exportCounts.settings || 0) + 1;
+      const n = data.exportCounts.settings;
+      saveData();
+
+      const payload = {
+        type: 'ultimate-staff-settings',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        exportedBy: message.author.id,
+        guildId: gid,
+        messages: data.messages[gid] || {},
+        invites: data.invites[gid] || {},
+        inviteUses: data.inviteUses[gid] || {},
+        coins: data.coins || {},
+        daily: data.daily || {}
+      };
+
+      const filename = `settings_export_${n}.json`;
+      const body = JSON.stringify(payload, null, 2);
+      const file = new AttachmentBuilder(Buffer.from(body, 'utf8'), { name: filename });
+
+      await ch.send({
+        content:
+          `📤 **Settings export** \`${filename}\`\n` +
+          `Messages users: **${Object.keys(payload.messages).length}** · ` +
+          `Invite users: **${Object.keys(payload.invites).length}**\n` +
+          `Import later: \`$settings import ${'{message_id}'}\` (reply to this file or paste ID)`,
+        files: [file]
+      });
+      return message.reply(`Exported settings into ${ch} as **${filename}**.`);
+    }
+
+    if (sub === 'import') {
+      let msgId = (args[1] || '').replace(/\D/g, '');
+      // allow reply-to import
+      if (!msgId && message.reference?.messageId) {
+        msgId = message.reference.messageId;
+      }
+      if (!msgId) {
+        return message.reply(
+          'Usage: `$settings import <message_id>`\n' +
+            'Or reply to the export message with `$settings import`'
+        );
+      }
+
+      let targetMsg = null;
+      // search current channel then common channels
+      try {
+        targetMsg = await message.channel.messages.fetch(msgId);
+      } catch (_) {}
+      if (!targetMsg) {
+        for (const ch of message.guild.channels.cache.values()) {
+          if (!ch.isTextBased?.()) continue;
+          try {
+            targetMsg = await ch.messages.fetch(msgId);
+            if (targetMsg) break;
+          } catch (_) {}
+        }
+      }
+      if (!targetMsg) {
+        return message.reply('Could not find that message ID in this server.');
+      }
+
+      let jsonText = null;
+      if (targetMsg.attachments.size) {
+        const att = targetMsg.attachments.find(
+          (a) =>
+            (a.name || '').endsWith('.json') ||
+            (a.contentType || '').includes('json') ||
+            (a.name || '').includes('settings')
+        ) || targetMsg.attachments.first();
+        if (att) {
+          const res = await fetch(att.url);
+          jsonText = await res.text();
+        }
+      }
+      if (!jsonText) {
+        const m = targetMsg.content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (m) jsonText = m[1];
+      }
+      if (!jsonText) {
+        return message.reply('No `.json` attachment or JSON code block found on that message.');
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(jsonText);
+      } catch (e) {
+        return message.reply('Invalid JSON in that export.');
+      }
+
+      if (!payload || typeof payload !== 'object') {
+        return message.reply('Empty export payload.');
+      }
+
+      // merge messages/invites for this guild (or payload.guildId)
+      const targetGid = payload.guildId || gid;
+      if (!data.messages[targetGid]) data.messages[targetGid] = {};
+      if (!data.invites[targetGid]) data.invites[targetGid] = {};
+      if (!data.inviteUses[targetGid]) data.inviteUses[targetGid] = {};
+
+      const msgIn = payload.messages || {};
+      const invIn = payload.invites || {};
+      const usesIn = payload.inviteUses || {};
+
+      let msgCount = 0;
+      let invCount = 0;
+      for (const [uid, count] of Object.entries(msgIn)) {
+        data.messages[targetGid][uid] = Math.max(
+          data.messages[targetGid][uid] || 0,
+          Number(count) || 0
+        );
+        msgCount++;
+      }
+      for (const [uid, count] of Object.entries(invIn)) {
+        data.invites[targetGid][uid] = Math.max(
+          data.invites[targetGid][uid] || 0,
+          Number(count) || 0
+        );
+        invCount++;
+      }
+      for (const [code, info] of Object.entries(usesIn)) {
+        data.inviteUses[targetGid][code] = info;
+      }
+      if (payload.coins && typeof payload.coins === 'object') {
+        data.coins = { ...data.coins, ...payload.coins };
+      }
+      if (payload.daily && typeof payload.daily === 'object') {
+        data.daily = { ...data.daily, ...payload.daily };
+      }
+      saveData();
+
+      return message.reply(
+        `✅ **Settings imported** from \`${msgId}\`\n` +
+          `Message records: **${msgCount}** users · Invite records: **${invCount}** users\n` +
+          `(Merged with max counts — existing higher values kept.)`
+      );
+    }
+
+    return message.reply(
+      '**Settings backup**\n' +
+        '`$settings export #channel` — save messages + invites as JSON file\n' +
+        '`$settings import <message_id>` — restore from that export message\n' +
+        'Or **reply** to the export message: `$settings import`'
+    );
+  }
+
+
+
+  // ========== $invites — show Falcon-synced invite count ==========
+  if (cmd === 'invites' || cmd === 'falcon') {
+    const user =
+      message.mentions.users.first() ||
+      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null))) ||
+      message.author;
+    const count = getUserInvites(message.guild.id, user.id);
+    const meta = data.falconInvites?.[message.guild.id]?.[user.id];
+    return message.reply(
+      `**${user.username}** invites (Falcon-synced): **${count}**` +
+        (meta?.at ? `\nLast Falcon sync: <t:${Math.floor(new Date(meta.at).getTime() / 1000)}:R>` : '') +
+        `\n\n_Refresh: run \`-i @${user.username}\` (Falcon) in this server — Staff Bot auto-reads it._`
+    );
+  }
 
   // ========== $help ==========
   if (cmd === 'help') {

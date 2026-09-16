@@ -739,7 +739,7 @@ async function deliverProductWithVouch(message, user, productKey, items, skipVou
           `We're logging this as a successful delivery.`
       ).catch(() => {});
 
-      // Vouch channel
+      // Vouch channel — LEGIT only (NO credentials)
       try {
         const vouchCh = message.guild.channels.cache.get(VOUCH_CHANNEL_ID);
         if (vouchCh) {
@@ -747,9 +747,9 @@ async function deliverProductWithVouch(message, user, productKey, items, skipVou
             embeds: [
               new EmbedBuilder()
                 .setColor(0x57f287)
-                .setTitle('✅ Customer confirmed — LEGIT')
+                .setTitle('✅ LEGIT')
                 .setDescription(
-                  `**Customer:** ${user}\n**Staff:** ${staff}\n**Product:** ${meta.emoji} **${meta.label}** ×${list.length}\n**Reply:** yes`
+                  `**Customer:** ${user}\n**Staff:** ${staff}\n**Product:** ${meta.emoji} **${meta.label}** ×${list.length}`
                 )
                 .setTimestamp()
             ]
@@ -757,22 +757,19 @@ async function deliverProductWithVouch(message, user, productKey, items, skipVou
         }
       } catch (_) {}
 
-      // Proof channel with spoilers
+      // Proof channel — same vouch text + spoilers in MESSAGE CONTENT only
+      // (Discord embeds do NOT hide ||spoilers|| — they leak as plain text)
       try {
         const proofCh = message.guild.channels.cache.get(PROOF_CHANNEL_ID);
         if (proofCh) {
           const spoilers = list.map((x) => `||${x}||`).join('\n');
-          await proofCh.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x5865f2)
-                .setTitle('📎 Delivery proof')
-                .setDescription(
-                  `**Staff:** ${staff}\n**User:** ${user}\n**Product:** ${meta.label} ×${list.length}\n\n${spoilers}`
-                )
-                .setTimestamp()
-            ]
-          });
+          await proofCh.send(
+            `✅ **LEGIT**\n` +
+              `**Customer:** ${user}\n` +
+              `**Staff:** ${staff}\n` +
+              `**Product:** ${meta.emoji} **${meta.label}** ×${list.length}\n\n` +
+              spoilers
+          );
         }
       } catch (_) {}
     } else if (ans === 'no' || ans === 'n') {

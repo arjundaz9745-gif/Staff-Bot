@@ -23,13 +23,18 @@ const PREFIX = process.env.PREFIX || '$';
 const PORT = process.env.PORT || 3000;
 
 // Staff role hierarchy for $staffstats (highest first)
-const OWNER_ROLE_ID = process.env.OWNER_ROLE_ID || '1547183159794204675';
-const CO_OWNER_ROLE_ID = process.env.CO_OWNER_ROLE_ID || '1547183161300090950';
-const MANAGER_ROLE_ID = process.env.MANAGER_ROLE_ID || '1549036072909021285';
-const HEAD_ADMIN_ROLE_ID = process.env.HEAD_ADMIN_ROLE_ID || '1547183162457718847';
-const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356';
-const STAFF_TEAM_ROLE_ID = process.env.STAFF_TEAM_ROLE_ID || ''; // optional: all staff role
-const REWARD_STAFF_ROLE_ID = process.env.REWARD_STAFF_ROLE_ID || '1548173330794815599'; // online staff to ping for claims
+const OWNER_ROLE_ID = process.env.OWNER_ROLE_ID || '1547183159794204675'; // Owner
+
+const FOUNDER_ROLE_ID = process.env.FOUNDER_ROLE_ID || '1547183159794204675';
+const DISCORD_DEV_ROLE_ID = process.env.DISCORD_DEV_ROLE_ID || '1545279142411509840';
+const CEO_ROLE_ID = process.env.CEO_ROLE_ID || '1545321225994371143';
+const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1545309154644590612';
+const CO_OWNER_ROLE_ID = process.env.CO_OWNER_ROLE_ID || '1547183161300090950'; // Co-owner
+const MANAGER_ROLE_ID = process.env.MANAGER_ROLE_ID || '1549036072909021285'; // Manager
+const HEAD_ADMIN_ROLE_ID = process.env.HEAD_ADMIN_ROLE_ID || '1547183162457718847'; // Head admin
+const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356'; // Admin
+const STAFF_TEAM_ROLE_ID = process.env.STAFF_TEAM_ROLE_ID || '1548173330794815599'; // Staff
+const REWARD_STAFF_ROLE_ID = process.env.REWARD_STAFF_ROLE_ID || '1548173330794815599';
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || ''; // optional: auto-prompt in new tickets
 
 // Anti-raid settings
@@ -56,8 +61,17 @@ const PRODUCT_STOCKS = {
 const VOUCH_CHANNEL_ID = process.env.VOUCH_CHANNEL_ID || '1547183217449242644';
 const PROOF_CHANNEL_ID = process.env.PROOF_CHANNEL_ID || '1547183218875301968';
 const SALARY_ADD_CHANNEL_ID = process.env.SALARY_ADD_CHANNEL_ID || '1547183228115222549';
-const BIRTHDAY_USER_ID = '1398979148063571989';
+const BIRTHDAY_USER_ID = process.env.BIRTHDAY_USER_ID || '1398979148063571989';
 const FALCON_BOT_ID = process.env.FALCON_BOT_ID || '899899858981371935'; // Falcon™
+
+const FREE_GEN_ROLE_ID = process.env.FREE_GEN_ROLE_ID || '1550508537766215773';
+const PAID_GEN_ROLE_ID = process.env.PAID_GEN_ROLE_ID || '1550509503710240953';
+const FREE_STATUS_TEXT = process.env.FREE_STATUS_TEXT || 'Legit mcfas on discord.gg/r9spJKVbsM';
+const MEDIA_ROLE_ID = process.env.MEDIA_ROLE_ID || '1540362727560843365';
+const OUR_BOTS_ROLE_ID = process.env.OUR_BOTS_ROLE_ID || '1540362727560843367';
+const OWNZ_ROLE_ID = process.env.OWNZ_ROLE_ID || '1540615105039827065';
+const DIRECTOR_ROLE_ID = process.env.DIRECTOR_ROLE_ID || '1540362727514701897';
+const ULTIMATE_WEB = process.env.ULTIMATE_WEB || 'https://ultimate-rewards.onrender.com';
 const STAFF_APPLY_PING_ROLES = [OWNER_ROLE_ID, CO_OWNER_ROLE_ID].filter(Boolean);
 
 function ensureStocks(d) {
@@ -113,7 +127,14 @@ function buildStockListEmbed() {
     .setTimestamp();
 }
 
+function isStaffApplyChannel(ch) {
+  if (!ch || !ch.name) return false;
+  const n = ch.name.toLowerCase();
+  return n.startsWith('staff-apply') || n.startsWith('staffapply') || n.includes('staff-apply');
+}
+
 function isTicketChannel(ch) {
+
   if (!ch || !ch.name) return false;
   const name = ch.name.toLowerCase();
   return (
@@ -126,7 +147,7 @@ function isTicketChannel(ch) {
 
 
 const DATA_PATH = process.env.RENDER
-  ? path.join('/tmp', 'best-bot-data.json')
+  ? path.join('/tmp', 'ultimate-bot-data.json')
   : path.join(__dirname, 'data.json');
 
 if (!TOKEN) {
@@ -134,12 +155,394 @@ if (!TOKEN) {
   process.exit(1);
 }
 
+const DASH_COOKIE = 'ur_dash_uid';
+const DEFAULT_GUILD_ID = process.env.GUILD_ID || process.env.DISCORD_GUILD_ID || '';
+const OAUTH_CLIENT_ID = process.env.DISCORD_CLIENT_ID || process.env.CLIENT_ID || '';
+const OAUTH_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || process.env.CLIENT_SECRET || '';
+const OAUTH_REDIRECT =
+  process.env.OAUTH_REDIRECT_URI ||
+  process.env.REDIRECT_URI ||
+  ''; // e.g. https://ultimate-staff.onrender.com/auth/callback
+
+const dashSessions = new Map(); // uid -> { at }
+
+function parseBody(req) {
+  return new Promise((resolve) => {
+    let buf = '';
+    req.on('data', (c) => (buf += c));
+    req.on('end', () => {
+      try {
+        resolve(buf ? JSON.parse(buf) : {});
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+function getCookie(req, name) {
+  const raw = req.headers.cookie || '';
+  for (const part of raw.split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('=') || '');
+  }
+  return '';
+}
+
+function setUidCookie(res, uid) {
+  res.setHeader(
+    'Set-Cookie',
+    `${DASH_COOKIE}=${encodeURIComponent(uid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`
+  );
+}
+
+function clearUidCookie(res) {
+  res.setHeader('Set-Cookie', `${DASH_COOKIE}=; Path=/; Max-Age=0`);
+}
+
+function getLoggedUid(req) {
+  const uid = getCookie(req, DASH_COOKIE);
+  if (!uid || !dashSessions.has(uid)) return null;
+  return uid;
+}
+
+async function memberCanAccessDashboard(userId) {
+  try {
+    if (!client?.guilds) return false;
+    const guildId = DEFAULT_GUILD_ID || client.guilds.cache.first()?.id;
+    if (!guildId) return false;
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    if (!guild) return false;
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) return false;
+    // Same rules as bot owner/staff commands
+    if (isCoOwnerOrAbove(member) || isHeadAdminOrAbove(member) || isStaff(member)) return true;
+    return false;
+  } catch (e) {
+    console.error('dash auth:', e.message);
+    return false;
+  }
+}
+
+function publicBase(req) {
+  if (OAUTH_REDIRECT) {
+    try {
+      const u = new URL(OAUTH_REDIRECT);
+      return `${u.protocol}//${u.host}`;
+    } catch (_) {}
+  }
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  return `${proto}://${host}`;
+}
+
+function redirectUri(req) {
+  if (OAUTH_REDIRECT) return OAUTH_REDIRECT;
+  return `${publicBase(req)}/auth/callback`;
+}
+
+function dashboardHtml(userTag) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Ultimate Rewards • Dashboard</title>
+<style>
+  :root { --bg:#0b0f1a; --card:#141b2d; --line:#243049; --text:#e8eefc; --muted:#8b9bb8; --acc:#5865f2; --ok:#57f287; }
+  *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,sans-serif;background:linear-gradient(160deg,#0b0f1a,#121a2f);color:var(--text);min-height:100vh}
+  .wrap{max-width:980px;margin:0 auto;padding:24px}
+  h1{font-size:1.4rem;margin:0 0 4px} .sub{color:var(--muted);margin-bottom:20px;font-size:.9rem}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  label{display:block;font-size:.8rem;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0e1422;color:var(--text)}
+  button,.btn{cursor:pointer;border:0;border-radius:10px;padding:10px 16px;font-weight:600;background:var(--acc);color:#fff;margin-top:12px;margin-right:8px;text-decoration:none;display:inline-block}
+  button.secondary{background:#2b3550} button.danger{background:#ed4245}
+  table{width:100%;border-collapse:collapse;font-size:.9rem} th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--muted)} .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#1e293b;font-size:.75rem}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:700px){.row{grid-template-columns:1fr}}
+  .status{font-size:.85rem;color:var(--ok)} .err{color:#ed4245} #gate{max-width:420px;margin:12vh auto;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="gate" class="card" style="display:none">
+    <h1>🔥 Ultimate Rewards</h1>
+    <p class="sub">Staff dashboard — login with Discord.<br/>Access = Owner / Manager / Staff roles or Admin / Manage Server perms.</p>
+    <a class="btn" id="loginBtn" href="/auth/login">Login with Discord</a>
+    <p id="gateErr" class="err"></p>
+  </div>
+  <div id="app" style="display:none">
+    <h1>Ultimate Rewards Dashboard</h1>
+    <p class="sub">Logged in as <b id="me">${userTag || '…'}</b> · edits sync to the bot live</p>
+    <p class="status" id="botStatus">Loading…</p>
+    <div class="card">
+      <h3 style="margin-top:0">Edit user stats</h3>
+      <div class="row">
+        <div><label>Guild ID</label><input id="guildId" placeholder="Server ID"/></div>
+        <div><label>Discord User ID</label><input id="userId" placeholder="User ID"/></div>
+      </div>
+      <div class="row">
+        <div><label>Invites</label><input id="invites" type="number" min="0" value="0"/></div>
+        <div><label>Messages</label><input id="messages" type="number" min="0" value="0"/></div>
+      </div>
+      <button onclick="loadUser()">Load</button>
+      <button onclick="saveUser()">Save to bot</button>
+      <p id="editMsg"></p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Top invites</h3>
+      <button class="secondary" onclick="loadTop('inv')">Refresh</button>
+      <table><thead><tr><th>#</th><th>User ID</th><th>Invites</th></tr></thead><tbody id="topInv"></tbody></table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Top messages</h3>
+      <button class="secondary" onclick="loadTop('msg')">Refresh</button>
+      <table><thead><tr><th>#</th><th>User ID</th><th>Messages</th></tr></thead><tbody id="topMsg"></tbody></table>
+    </div>
+    <a class="btn" style="background:#ed4245" href="/auth/logout">Logout</a>
+  </div>
+</div>
+<script>
+async function api(path, opts={}) {
+  const r = await fetch(path, { credentials:'same-origin', headers:{'Content-Type':'application/json'}, ...opts });
+  const j = await r.json().catch(()=>({}));
+  if (r.status === 401) { showGate(j.error); throw new Error(j.error||'auth'); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function showGate(err){
+  document.getElementById('gate').style.display='block';
+  document.getElementById('app').style.display='none';
+  if (err) document.getElementById('gateErr').textContent = err;
+}
+async function boot(){
+  const s = await api('/api/status');
+  if (!s.authed) return showGate(s.error||'');
+  document.getElementById('gate').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('me').textContent = s.userTag || s.userId || 'staff';
+  document.getElementById('botStatus').textContent = s.online ? ('Bot: '+(s.tag||'online')) : 'Bot starting…';
+  if (s.defaultGuildId) document.getElementById('guildId').value = s.defaultGuildId;
+  loadTop('inv'); loadTop('msg');
+}
+async function loadUser(){
+  const guildId = document.getElementById('guildId').value.trim();
+  const userId = document.getElementById('userId').value.trim();
+  const j = await api('/api/user?guildId='+encodeURIComponent(guildId)+'&userId='+encodeURIComponent(userId));
+  document.getElementById('invites').value = j.invites||0;
+  document.getElementById('messages').value = j.messages||0;
+  document.getElementById('editMsg').textContent = 'Loaded.';
+}
+async function saveUser(){
+  await api('/api/user', { method:'POST', body: JSON.stringify({
+    guildId: document.getElementById('guildId').value.trim(),
+    userId: document.getElementById('userId').value.trim(),
+    invites: Number(document.getElementById('invites').value||0),
+    messages: Number(document.getElementById('messages').value||0)
+  })});
+  document.getElementById('editMsg').innerHTML = '<span class="status">Saved — bot updated.</span>';
+  loadTop('inv'); loadTop('msg');
+}
+async function loadTop(kind){
+  const guildId = document.getElementById('guildId').value.trim();
+  const j = await api('/api/top?kind='+kind+'&guildId='+encodeURIComponent(guildId));
+  const tb = document.getElementById(kind==='inv'?'topInv':'topMsg');
+  tb.innerHTML = (j.rows||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td><span class="pill">'+r.userId+'</span></td><td><b>'+r.count+'</b></td></tr>').join('') || '<tr><td colspan=3>No data</td></tr>';
+}
+boot().catch(()=>showGate(''));
+</script>
+</body></html>`;
+}
+
 http
-  .createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Best bot is online');
+  .createServer(async (req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const pathName = url.pathname;
+    const json = (code, obj, extraHeaders = {}) => {
+      res.writeHead(code, { 'Content-Type': 'application/json', ...extraHeaders });
+      res.end(JSON.stringify(obj));
+    };
+
+    try {
+      if (pathName === '/health' || pathName === '/api/health') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ok');
+        return;
+      }
+
+      // Discord OAuth login
+      if (pathName === '/auth/login') {
+        if (!OAUTH_CLIENT_ID) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET in env');
+          return;
+        }
+        const redir = encodeURIComponent(redirectUri(req));
+        const scope = encodeURIComponent('identify');
+        const authUrl =
+          `https://discord.com/api/oauth2/authorize?client_id=${OAUTH_CLIENT_ID}` +
+          `&redirect_uri=${redir}&response_type=code&scope=${scope}`;
+        res.writeHead(302, { Location: authUrl });
+        res.end();
+        return;
+      }
+
+      if (pathName === '/auth/callback') {
+        const code = url.searchParams.get('code');
+        if (!code) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Missing code');
+          return;
+        }
+        const redir = redirectUri(req);
+        const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: OAUTH_CLIENT_ID,
+            client_secret: OAUTH_CLIENT_SECRET,
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: redir
+          })
+        });
+        const tokenJson = await tokenRes.json();
+        if (!tokenRes.ok || !tokenJson.access_token) {
+          console.error('oauth token', tokenJson);
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('OAuth token failed. Check CLIENT_SECRET and Redirect URI.');
+          return;
+        }
+        const userRes = await fetch('https://discord.com/api/users/@me', {
+          headers: { Authorization: `Bearer ${tokenJson.access_token}` }
+        });
+        const user = await userRes.json();
+        if (!user?.id) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Could not load Discord user');
+          return;
+        }
+        const allowed = await memberCanAccessDashboard(user.id);
+        if (!allowed) {
+          res.writeHead(403, { 'Content-Type': 'text/html' });
+          res.end(
+            '<h2>Access denied</h2><p>You need Staff / Manager / Owner role or Administrator / Manage Server permission on the Ultimate Rewards server.</p><a href="/">Back</a>'
+          );
+          return;
+        }
+        dashSessions.set(user.id, {
+          at: Date.now(),
+          tag: `${user.username}${user.discriminator && user.discriminator !== '0' ? '#' + user.discriminator : ''}`
+        });
+        setUidCookie(res, user.id);
+        res.writeHead(302, { Location: '/dashboard' });
+        res.end();
+        return;
+      }
+
+      if (pathName === '/auth/logout') {
+        const uid = getLoggedUid(req);
+        if (uid) dashSessions.delete(uid);
+        clearUidCookie(res);
+        res.writeHead(302, { Location: '/' });
+        res.end();
+        return;
+      }
+
+      if (pathName === '/' || pathName === '/dashboard') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(dashboardHtml(''));
+        return;
+      }
+
+      if (pathName === '/api/status') {
+        const uid = getLoggedUid(req);
+        let authed = false;
+        let userTag = null;
+        if (uid) {
+          authed = await memberCanAccessDashboard(uid);
+          if (!authed) dashSessions.delete(uid);
+          else userTag = dashSessions.get(uid)?.tag || uid;
+        }
+        return json(200, {
+          online: !!(typeof client !== 'undefined' && client?.user),
+          tag: client?.user?.tag || null,
+          guilds: client?.guilds?.cache?.size || 0,
+          defaultGuildId: DEFAULT_GUILD_ID || client?.guilds?.cache?.first()?.id || '',
+          authed,
+          userId: authed ? uid : null,
+          userTag,
+          error: !OAUTH_CLIENT_ID ? 'Set DISCORD_CLIENT_ID + DISCORD_CLIENT_SECRET' : undefined
+        });
+      }
+
+      // Protected APIs
+      if (pathName.startsWith('/api/')) {
+        const uid = getLoggedUid(req);
+        if (!uid || !(await memberCanAccessDashboard(uid))) {
+          return json(401, { error: 'Login with Discord (staff only)' });
+        }
+      }
+
+      if (pathName === '/api/user' && req.method === 'GET') {
+        const guildId = url.searchParams.get('guildId') || DEFAULT_GUILD_ID;
+        const userId = url.searchParams.get('userId');
+        if (!guildId || !userId) return json(400, { error: 'guildId and userId required' });
+        return json(200, {
+          guildId,
+          userId,
+          invites: data.invites?.[guildId]?.[userId] || 0,
+          messages: data.messages?.[guildId]?.[userId] || 0
+        });
+      }
+
+      if (pathName === '/api/user' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const guildId = String(body.guildId || DEFAULT_GUILD_ID || '');
+        const userId = String(body.userId || '');
+        if (!guildId || !userId) return json(400, { error: 'guildId and userId required' });
+        if (!data.invites[guildId]) data.invites[guildId] = {};
+        if (!data.messages[guildId]) data.messages[guildId] = {};
+        const inv = Math.max(0, parseInt(body.invites, 10) || 0);
+        const msg = Math.max(0, parseInt(body.messages, 10) || 0);
+        data.invites[guildId][userId] = inv;
+        data.messages[guildId][userId] = msg;
+        if (!data.falconInvites) data.falconInvites = {};
+        if (!data.falconInvites[guildId]) data.falconInvites[guildId] = {};
+        data.falconInvites[guildId][userId] = { count: inv, at: new Date().toISOString(), source: 'dashboard' };
+        if (!data.falconMessages) data.falconMessages = {};
+        if (!data.falconMessages[guildId]) data.falconMessages[guildId] = {};
+        data.falconMessages[guildId][userId] = { count: msg, at: new Date().toISOString(), source: 'dashboard' };
+        saveData();
+        return json(200, { ok: true, invites: inv, messages: msg });
+      }
+
+      if (pathName === '/api/top') {
+        const kind = url.searchParams.get('kind') || 'inv';
+        const guildId =
+          url.searchParams.get('guildId') ||
+          DEFAULT_GUILD_ID ||
+          client?.guilds?.cache?.first()?.id;
+        const map = kind === 'msg' ? data.messages?.[guildId] || {} : data.invites?.[guildId] || {};
+        const rows = Object.entries(map)
+          .map(([userId, count]) => ({ userId, count: Number(count) || 0 }))
+          .filter((r) => r.count > 0)
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 25);
+        return json(200, { rows });
+      }
+
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
+    } catch (e) {
+      console.error('HTTP:', e.message);
+      json(500, { error: e.message });
+    }
   })
-  .listen(PORT, '0.0.0.0', () => console.log(`HTTP health server on port ${PORT}`));
+  .listen(PORT, '0.0.0.0', () =>
+    console.log(`Dashboard (Discord OAuth) on port ${PORT}`)
+  );
 
 function loadData() {
   try {
@@ -162,6 +565,9 @@ function loadData() {
       if (typeof d.staffApplyOpen !== 'boolean') d.staffApplyOpen = true;
       if (!d.staffApplications) d.staffApplications = {};
       if (!d.falconInvites) d.falconInvites = {};
+      if (!d.falconMessages) d.falconMessages = {};
+      if (!d.giveaways) d.giveaways = {};
+      if (!d.aiChannelId) d.aiChannelId = null;
       return d;
     }
   } catch (e) {
@@ -231,14 +637,23 @@ function isStaff(member) {
 
 function isCoOwnerOrAbove(member) {
   if (!member) return false;
+  // Discord permissions (server Owner-like / high staff) — not only role IDs
+  try {
+    if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
+    if (member.permissions?.has(PermissionFlagsBits.ManageGuild)) return true;
+  } catch (_) {}
   if (OWNER_ROLE_ID && member.roles.cache.has(OWNER_ROLE_ID)) return true;
   if (CO_OWNER_ROLE_ID && member.roles.cache.has(CO_OWNER_ROLE_ID)) return true;
+  if (MANAGER_ROLE_ID && member.roles.cache.has(MANAGER_ROLE_ID)) return true;
   return false;
 }
 
 function isHeadAdminOrAbove(member) {
   if (!member) return false;
-  if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
+  try {
+    if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
+    if (member.permissions?.has(PermissionFlagsBits.ManageGuild)) return true;
+  } catch (_) {}
   if (OWNER_ROLE_ID && member.roles.cache.has(OWNER_ROLE_ID)) return true;
   if (CO_OWNER_ROLE_ID && member.roles.cache.has(CO_OWNER_ROLE_ID)) return true;
   if (MANAGER_ROLE_ID && member.roles.cache.has(MANAGER_ROLE_ID)) return true;
@@ -296,13 +711,27 @@ const REWARD_TIERS = [
   { id: 2, invites: 4, name: 'Xbox Code', type: 'reward' },
   { id: 3, invites: 5, name: 'MCFA — Hypixel Unbanned', type: 'reward' },
   { id: 4, invites: 8, name: 'Netflix Premium — PC Login', type: 'reward' },
-  { id: 5, invites: 10, name: 'Crunchyroll Premium', type: 'reward' },
-  { id: 6, invites: 2, name: 'MC Redeem Code Method', type: 'method' },
-  { id: 7, invites: 4, name: 'Nitro Basic Yearly Method', type: 'method' },
-  { id: 8, invites: 5, name: 'MCFA Email Change Method', type: 'method' },
-  { id: 9, invites: 8, name: 'MCFA Password Change Method', type: 'method' },
-  { id: 10, invites: 12, name: '5,000 Robux Method', type: 'method' }
+  { id: 5, invites: 10, name: 'Crunchyroll Premium', type: 'reward' }
 ];
+
+// Message milestone rewards (methods + extras) — staff verify; $mclaim in tickets
+const MESSAGE_REWARDS = [
+  { id: 1, messages: 1000, name: '1 Method', type: 'method' },
+  { id: 2, messages: 2000, name: '2 Methods', type: 'method' },
+  { id: 3, messages: 5000, name: '1 MCFA', type: 'reward' },
+  { id: 4, messages: 7500, name: 'Any reward from the 2-invite list', type: 'choice' },
+  { id: 5, messages: 10000, name: 'Any reward from the 4-invite list', type: 'choice' },
+  { id: 6, messages: 15000, name: '2 MCFAs', type: 'reward' }
+];
+
+const METHOD_CATALOG = [
+  'MC Redeem Code Method',
+  'Nitro Basic Yearly Method',
+  'MCFA Email Change Method',
+  'MCFA Password Change Method',
+  '5,000 Robux Method'
+];
+
 
 function getUserInvites(guildId, userId) {
   return data.invites[guildId]?.[userId] || 0;
@@ -354,6 +783,47 @@ function setFalconInvites(guildId, userId, count) {
   };
   saveData();
 }
+
+function setFalconMessages(guildId, userId, count) {
+  if (!guildId || !userId) return;
+  if (!data.messages[guildId]) data.messages[guildId] = {};
+  // Prefer Falcon count as source of truth when synced
+  data.messages[guildId][userId] = Math.max(0, count);
+  if (!data.falconMessages) data.falconMessages = {};
+  if (!data.falconMessages[guildId]) data.falconMessages[guildId] = {};
+  data.falconMessages[guildId][userId] = {
+    count,
+    at: new Date().toISOString()
+  };
+  saveData();
+}
+
+function parseFalconMessages(msg) {
+  if (!msg || msg.author?.id !== FALCON_BOT_ID) return null;
+  const text = [
+    msg.content || '',
+    ...(msg.embeds || []).flatMap((e) => [
+      e.title || '',
+      e.description || '',
+      ...(e.fields || []).map((f) => `${f.name} ${f.value}`)
+    ])
+  ].join('\n');
+  // "has 1234 messages" / "Messages: 1234" / "1,234 messages"
+  let m =
+    text.match(/has\s+([\d,]+)\s+messages/i) ||
+    text.match(/messages?\s*[:=]\s*([\d,]+)/i) ||
+    text.match(/([\d,]+)\s+messages/i);
+  if (!m) return null;
+  const count = parseInt(m[1].replace(/,/g, ''), 10);
+  if (Number.isNaN(count)) return null;
+  let userId = msg.mentions?.users?.first()?.id || null;
+  if (!userId) {
+    const um = text.match(/<@!?(\d{15,20})>/);
+    if (um) userId = um[1];
+  }
+  return { userId, count };
+}
+
 
 
 function getEligibleRewards(inviteCount) {
@@ -452,14 +922,51 @@ async function startRewardClaimFlow(channel, user) {
     }
 
     collector.stop('chosen');
-    const pingPayload = await pingOnlineRewardStaff(channel.guild, user, chosen.name);
-    if (pingPayload) {
-      await channel.send(pingPayload).catch(() => {});
-    } else {
+
+    // Auto-deliver from stock INTO THE TICKET (not DM)
+    const nameL = chosen.name.toLowerCase();
+    let productKey = 'mcfa';
+    if (nameL.includes('netflix')) productKey = 'netflix';
+    else if (nameL.includes('crunchy')) productKey = 'crunchyroll';
+    else if (nameL.includes('xbox')) productKey = 'xbox';
+    else if (nameL.includes('nitro')) productKey = 'nitro';
+    else if (nameL.includes('steam')) productKey = 'steam';
+    else if (nameL.includes('donut')) productKey = 'donut';
+    else if (nameL.includes('hypixel')) productKey = 'hypixel';
+    else if (nameL.includes('method') || nameL.includes('robux')) {
       await channel.send(
-        `${user} selected **${chosen.name}** — staff will assist shortly.`
+        `${user} selected **${chosen.name}** (method reward).
+` +
+          `Staff will complete this manually. <@&${OWNER_ROLE_ID}>`
       ).catch(() => {});
+      return;
     }
+
+    const taken = await takeFromStock(productKey, 1);
+    if (!taken) {
+      await channel.send(
+        `${user} selected **${chosen.name}** but **${productKey}** stock is empty.\n` +
+          `Staff will assist. <@&${OWNER_ROLE_ID}>`
+      ).catch(() => {});
+      return;
+    }
+
+    const meta = PRODUCT_STOCKS[productKey] || { label: productKey, emoji: '📦' };
+    const deliverEmbed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle('🎁 Reward delivered')
+      .setDescription(
+        `**Reward:** ${chosen.name}\n` +
+          `**Product:** ${meta.emoji} **${meta.label}**\n` +
+          `**User:** ${user}\n\n` +
+          `# ARE WE LEGIT?\n` +
+          `If there is any login issue, reply here and ping staff.`
+      )
+      .setFooter({ text: 'Ultimate Rewards • Auto claim' })
+      .setTimestamp();
+
+    await channel.send({ content: `${user}`, embeds: [deliverEmbed] }).catch(() => {});
+    await channel.send(`||${taken[0]}||`).catch(() => {});
   });
 
   collector.on('end', async (_, reason) => {
@@ -515,6 +1022,23 @@ function classifyAccount(acc) {
   return { email, pass, domain, fmt, domOk, ok: fmt && domOk, acc: `${email}:${pass}` };
 }
 
+function parseHitEntry(item) {
+  // email:pass  OR  email:pass:MCUsername (username = 3–16 alphanumeric/_)
+  if (!item || !item.includes(':')) return null;
+  const first = item.indexOf(':');
+  const email = item.slice(0, first).trim();
+  const rest = item.slice(first + 1).trim();
+  if (!email || !rest) return null;
+  const last = rest.lastIndexOf(':');
+  if (last > 0) {
+    const maybe = rest.slice(last + 1).trim();
+    if (/^[A-Za-z0-9_]{3,16}$/.test(maybe)) {
+      return { email, pass: rest.slice(0, last), username: maybe };
+    }
+  }
+  return { email, pass: rest, username: null };
+}
+
 function parseAccounts(text) {
   // Accept: mail:pass | mail:pass,mail:pass | one per line | with ||spoilers||
   const cleaned = text
@@ -564,6 +1088,36 @@ async function onReady() {
     await cacheGuildInvites(guild);
   }
   setInterval(() => saveData(), 60_000);
+
+  try {
+    const cmds = [
+      new SlashCommandBuilder()
+        .setName('gstart')
+        .setDescription('Start a giveaway')
+        .addStringOption((o) =>
+          o.setName('time').setDescription('Duration e.g. 10m, 2h, 1d').setRequired(true)
+        )
+        .addIntegerOption((o) =>
+          o.setName('winners').setDescription('Number of winners').setRequired(true).setMinValue(1).setMaxValue(20)
+        )
+        .addStringOption((o) =>
+          o.setName('prize').setDescription('Prize / item').setRequired(true)
+        ),
+      new SlashCommandBuilder()
+        .setName('greroll')
+        .setDescription('Reroll giveaway winners')
+        .addStringOption((o) =>
+          o.setName('message_id').setDescription('Giveaway message ID').setRequired(false)
+        )
+    ].map((c) => c.toJSON());
+    await client.application.commands.set(cmds);
+    console.log('Slash commands registered: /gstart /greroll');
+  } catch (e) {
+    console.error('slash register:', e.message);
+  }
+  if (data.giveaways) {
+    for (const id of Object.keys(data.giveaways)) scheduleGiveaway(id);
+  }
 }
 
 client.once('ready', onReady);
@@ -724,7 +1278,7 @@ function ultimateFaqReply(text) {
   }
 
   if (/(discord|server|rules)/i.test(q)) {
-    return "This is the **Ultimate Rewards** server — rewards, digital products, invite events. Follow staff instructions in tickets. Website: https://ultimate-rewards.onrender.com";
+    return "This is the **Ultimate Rewards** rewards server — rewards, digital products, invite events. Follow staff instructions in tickets. Website: https://ultimate-rewards.onrender.com";
   }
 
   // Friendly general fallback (still on-topic helper, not unrestricted AI)
@@ -740,84 +1294,81 @@ function ultimateFaqReply(text) {
 
 
 
+
+async function askOpenAI(userText) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.7,
+        max_tokens: 500,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are the Ultimate Rewards staff helper bot on Discord. ' +
+              'Be helpful, friendly, short. Website: https://ultimate-rewards.onrender.com. ' +
+              'You know MCFA, NFA, SFA, invite rewards, tickets, stock, staff apply. ' +
+              'Do NOT help with illegal activity, account theft, credential checking, hacking, or bot-making exploits. ' +
+              'If asked who made you: Ultimate Rewards staff + AI assistant.'
+          },
+          { role: 'user', content: String(userText || '').slice(0, 1500) }
+        ]
+      })
+    });
+    if (!res.ok) {
+      console.error('OpenAI HTTP', res.status, await res.text().catch(() => ''));
+      return null;
+    }
+    const json = await res.json();
+    return json.choices?.[0]?.message?.content?.trim() || null;
+  } catch (e) {
+    console.error('OpenAI:', e.message);
+    return null;
+  }
+}
+
 async function deliverProductWithVouch(message, user, productKey, items, skipVouch) {
   const meta = PRODUCT_STOCKS[productKey] || { label: productKey, emoji: '📦' };
   const staff = message.author;
   const list = Array.isArray(items) ? items : [items];
 
-  let dm =
-    `**Ultimate Rewards — ${meta.label} delivery**\n` +
-    `You received **${list.length}** item(s):\n\n`;
-  list.forEach((it, i) => {
-    dm += `**#${i + 1}** ||${it}||\n`;
-  });
-  dm += `\nDelivered by ${staff.username}.\n\n`;
-
-  if (skipVouch) {
-    dm += `Thank you!`;
-    await user.send(dm);
-    return true;
-  }
-
-  dm +=
-    `# ARE WE LEGIT?\n` +
-    `Reply with **yes** or **no** in this DM.\n` +
-    `- **yes** → we post a vouch & proof\n` +
-    `- **no** → send login issue screenshot in your ticket and ping the staff who paid you\n` +
-    `-# Not replying within **24 hours** may result in a **1 week timeout**.`;
-
   try {
-    await user.send(dm);
+    await user.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xbe2c71)
+          .setTitle(`Ultimate Rewards — ${meta.label}`)
+          .setDescription(
+            list.map((it, i) => `**#${i + 1}** ||${it}||`).join('\n') +
+              `\n\n# ARE WE LEGIT?\n` +
+              `Delivered by **${staff.username}**\n` +
+              `If login fails, open a ticket.\n` +
+              `${typeof ULTIMATE_WEB !== 'undefined' ? ULTIMATE_WEB : 'https://ultimate-rewards.onrender.com'}`
+          )
+          .setTimestamp()
+      ]
+    });
+    return true;
   } catch (e) {
-    return false;
-  }
-
-  // Collect yes/no in DM for 24h
-  const dmCh = await user.createDM();
-  const collector = dmCh.createMessageCollector({
-    filter: (m) => m.author.id === user.id && !m.author.bot,
-    time: 24 * 60 * 60 * 1000,
-    max: 5
-  });
-
-  collector.on('collect', async (m) => {
-    const ans = m.content.trim().toLowerCase();
-    if (ans === 'yes' || ans === 'y') {
-      collector.stop('yes');
-      await m.reply(
-        `Thanks! Please also post a public vouch for **${staff.username}** if you can.\n` +
-          `We're logging this as a successful delivery.`
-      ).catch(() => {});
-
-      // Proof channel ONLY — LEGIT record (never credentials, never auto-post in vouch)
-      try {
-        const proofCh = message.guild.channels.cache.get(PROOF_CHANNEL_ID);
-        if (proofCh) {
-          await proofCh.send(
-            `✅ **LEGIT**\n` +
-              `**Customer:** ${user}\n` +
-              `**Staff:** ${staff}\n` +
-              `**Product:** ${meta.emoji} **${meta.label}** ×${list.length}\n` +
-              `-# Account stays private with the customer — not posted here.`
-          );
-        }
-      } catch (_) {}
-    } else if (ans === 'no' || ans === 'n') {
-      collector.stop('no');
-      await m.reply(
-        `**Ok. Send your login issue screenshot in your ticket please! And ping ${staff}.**`
-      ).catch(() => {});
-      try {
-        await message.channel.send(
-          `${staff} — ${user} replied **no** on delivery. They should send a screenshot in the ticket.`
-        );
-      } catch (_) {}
-    } else {
-      await m.reply('Please reply **yes** or **no**.').catch(() => {});
+    try {
+      let dm =
+        `**Ultimate Rewards — ${meta.label}**\n` +
+        list.map((it, i) => `**#${i + 1}** ||${it}||`).join('\n') +
+        `\n\n# ARE WE LEGIT?\nDelivered by ${staff.username}`;
+      await user.send(dm);
+      return true;
+    } catch (_) {
+      return false;
     }
-  });
-
-  return true;
+  }
 }
 
 async function takeFromStock(productKey, amount) {
@@ -831,36 +1382,243 @@ async function takeFromStock(productKey, amount) {
 }
 
 
+
+client.on('presenceUpdate', async (before, after) => {
+  try {
+    if (!after || after.user?.bot || !after.guild) return;
+    const role = after.guild.roles.cache.get(FREE_GEN_ROLE_ID);
+    if (!role) return;
+    const custom = after.activities?.find((a) => a.type === 4);
+    const statusText = custom?.state || '';
+    const ok = statusText.includes(FREE_STATUS_TEXT);
+    const has = after.roles.cache.has(FREE_GEN_ROLE_ID);
+    if (ok && !has) await after.roles.add(role).catch(() => {});
+    if (!ok && has) await after.roles.remove(role).catch(() => {});
+  } catch (_) {}
+});
+
+
+function parseDuration(str) {
+  const s = String(str || '').trim().toLowerCase();
+  const m = s.match(/^(\d+)\s*(s|m|h|d|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|day|days)?$/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  const u = (m[2] || 'm').toLowerCase();
+  if (u.startsWith('s')) return n * 1000;
+  if (u.startsWith('m')) return n * 60 * 1000;
+  if (u.startsWith('h')) return n * 60 * 60 * 1000;
+  if (u.startsWith('d')) return n * 24 * 60 * 60 * 1000;
+  return n * 60 * 1000;
+}
+
+function giveawayButtons(joined) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('gw_join')
+      .setLabel(`JOIN GIVEAWAY (${joined})`)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('gw_leave')
+      .setLabel('LEAVE GIVEAWAY')
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+function buildGiveawayEmbed(gw) {
+  const ends = gw.endsAt;
+  const ended = Date.now() >= ends;
+  return new EmbedBuilder()
+    .setColor(ended ? 0xed4245 : 0x5865f2)
+    .setTitle(`🎁 | ${gw.prize}`)
+    .setDescription(
+      `**CLICK THE BUTTON BELOW TO ENTER!**\n\n` +
+        `🎉 **WINNERS:** ${gw.winners}\n` +
+        `👥 **ENTRIES:** ${gw.entries.length}\n` +
+        (ended
+          ? `⏰ **ENDED**`
+          : `⏰ **ENDS:** <t:${Math.floor(ends / 1000)}:R> (<t:${Math.floor(ends / 1000)}:f>)`) +
+        `\n👑 **HOST:** <@${gw.hostId}>`
+    )
+    .setFooter({ text: ended ? 'Giveaway ended' : 'Ultimate Rewards Giveaway' })
+    .setTimestamp(ends);
+}
+
+async function endGiveaway(messageId, forceReroll) {
+  const gw = data.giveaways?.[messageId];
+  if (!gw || (gw.ended && !forceReroll)) return;
+  gw.ended = true;
+  saveData();
+  const channel = await client.channels.fetch(gw.channelId).catch(() => null);
+  if (!channel) return;
+  const msg = await channel.messages.fetch(messageId).catch(() => null);
+  const pool = [...new Set(gw.entries)];
+  const winners = [];
+  const copy = [...pool];
+  while (winners.length < gw.winners && copy.length) {
+    const i = Math.floor(Math.random() * copy.length);
+    winners.push(copy.splice(i, 1)[0]);
+  }
+  gw.winnerIds = winners;
+  saveData();
+  const embed = buildGiveawayEmbed(gw);
+  if (msg) {
+    await msg.edit({ embeds: [embed], components: [] }).catch(() => {});
+  }
+  if (!winners.length) {
+    await channel.send(`🎁 Giveaway **${gw.prize}** ended — no valid entries.`).catch(() => {});
+    return;
+  }
+  const mentions = winners.map((id) => `<@${id}>`).join(' ');
+  await channel.send(
+    `🎉 **CONGRATULATIONS** ${mentions}! You won the **${gw.prize}**!`
+  ).catch(() => {});
+}
+
+// Schedule ends for active giveaways
+function scheduleGiveaway(messageId) {
+  const gw = data.giveaways?.[messageId];
+  if (!gw || gw.ended) return;
+  const delay = Math.max(0, gw.endsAt - Date.now());
+  setTimeout(() => endGiveaway(messageId, false), delay);
+}
+
+
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    // Buttons
+    if (interaction.isButton()) {
+      if (interaction.customId !== 'gw_join' && interaction.customId !== 'gw_leave') return;
+      const gw = data.giveaways?.[interaction.message.id];
+      if (!gw || gw.ended) {
+        return interaction.reply({ content: 'This giveaway has ended.', ephemeral: true });
+      }
+      if (!Array.isArray(gw.entries)) gw.entries = [];
+      const uid = interaction.user.id;
+      if (interaction.customId === 'gw_join') {
+        if (gw.entries.includes(uid)) {
+          return interaction.reply({ content: 'You already joined!', ephemeral: true });
+        }
+        gw.entries.push(uid);
+        saveData();
+        await interaction.message.edit({
+          embeds: [buildGiveawayEmbed(gw)],
+          components: [giveawayButtons(gw.entries.length)]
+        }).catch(() => {});
+        return interaction.reply({ content: '✅ You joined the giveaway!', ephemeral: true });
+      }
+      // leave
+      gw.entries = gw.entries.filter((id) => id !== uid);
+      saveData();
+      await interaction.message.edit({
+        embeds: [buildGiveawayEmbed(gw)],
+        components: [giveawayButtons(gw.entries.length)]
+      }).catch(() => {});
+      return interaction.reply({ content: 'You left the giveaway.', ephemeral: true });
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'gstart') {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isStaff(interaction.member)) {
+        return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      }
+      const timeStr = interaction.options.getString('time', true);
+      const winners = interaction.options.getInteger('winners', true);
+      const prize = interaction.options.getString('prize', true);
+      const ms = parseDuration(timeStr);
+      if (!ms || ms < 10000) {
+        return interaction.reply({
+          content: 'Invalid time. Examples: `10m`, `2h`, `1d`',
+          ephemeral: true
+        });
+      }
+      const endsAt = Date.now() + ms;
+      const gw = {
+        prize,
+        winners,
+        hostId: interaction.user.id,
+        channelId: interaction.channelId,
+        endsAt,
+        entries: [],
+        ended: false
+      };
+      const embed = buildGiveawayEmbed(gw);
+      const msg = await interaction.channel.send({
+        embeds: [embed],
+        components: [giveawayButtons(0)]
+      });
+      if (!data.giveaways) data.giveaways = {};
+      data.giveaways[msg.id] = gw;
+      saveData();
+      scheduleGiveaway(msg.id);
+      return interaction.reply({ content: `Giveaway started: ${msg.url}`, ephemeral: true });
+    }
+
+    if (interaction.commandName === 'greroll') {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isStaff(interaction.member)) {
+        return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      }
+      let mid = interaction.options.getString('message_id');
+      if (!mid) {
+        // last giveaway in this channel
+        const list = Object.entries(data.giveaways || {})
+          .filter(([, g]) => g.channelId === interaction.channelId)
+          .sort((a, b) => (b[1].endsAt || 0) - (a[1].endsAt || 0));
+        mid = list[0]?.[0];
+      }
+      if (!mid || !data.giveaways?.[mid]) {
+        return interaction.reply({
+          content: 'Giveaway not found. Pass `message_id` of the giveaway message.',
+          ephemeral: true
+        });
+      }
+      await endGiveaway(mid, true);
+      return interaction.reply({ content: 'Rerolled winners.', ephemeral: true });
+    }
+  } catch (e) {
+    console.error('interaction:', e.message);
+    if (interaction.isRepliable() && !interaction.replied) {
+      interaction.reply({ content: 'Error handling interaction.', ephemeral: true }).catch(() => {});
+    }
+  }
+});
+
+
 client.on('messageCreate', async (message) => {
   if (!message.guild) return;
 
   // ========== Falcon -i invite sync ==========
   if (message.author.bot && message.author.id === FALCON_BOT_ID) {
     try {
-      const parsed = parseFalconInvites(message);
-      if (parsed && parsed.count !== null) {
-        let uid = parsed.userId;
-        // If Falcon didn't mention user, try reference (reply to -i command)
+      const resolveUid = async (parsed) => {
+        let uid = parsed?.userId || null;
         if (!uid && message.reference?.messageId) {
           const ref = await message.channel.messages
             .fetch(message.reference.messageId)
             .catch(() => null);
           if (ref) {
-            uid =
-              ref.mentions?.users?.first()?.id ||
-              ref.author?.id ||
-              null;
-            // -i @user → mention; -i alone → author
-            if (ref.content && /^[-/]?i(nvites)?/i.test(ref.content.trim())) {
-              uid = ref.mentions?.users?.first()?.id || ref.author.id;
-            }
+            uid = ref.mentions?.users?.first()?.id || ref.author?.id || null;
           }
         }
+        return uid;
+      };
+
+      const inv = parseFalconInvites(message);
+      if (inv && inv.count !== null) {
+        const uid = await resolveUid(inv);
         if (uid) {
-          setFalconInvites(message.guild.id, uid, parsed.count);
-          console.log(
-            `Falcon sync: ${uid} → ${parsed.count} invites in ${message.guild.id}`
-          );
+          setFalconInvites(message.guild.id, uid, inv.count);
+          console.log(`Falcon invites: ${uid} → ${inv.count}`);
+        }
+      }
+
+      const msgs = parseFalconMessages(message);
+      if (msgs && msgs.count !== null) {
+        const uid = await resolveUid(msgs);
+        if (uid) {
+          setFalconMessages(message.guild.id, uid, msgs.count);
+          console.log(`Falcon messages: ${uid} → ${msgs.count}`);
         }
       }
     } catch (e) {
@@ -888,7 +1646,8 @@ client.on('messageCreate', async (message) => {
       client.user &&
       !message.author.bot &&
       message.mentions.users.has(client.user.id) &&
-      !message.mentions.everyone
+      !message.mentions.everyone &&
+      (!data.aiChannelId || String(message.channel.id) === String(data.aiChannelId))
     ) {
       // Ignore pure role mass-pings that also happen to list the bot somehow
       const cleaned = message.content
@@ -901,8 +1660,9 @@ client.on('messageCreate', async (message) => {
       if (!cleaned && (message.mentions.roles.size > 0 || message.content.includes('@everyone'))) {
         // still allow empty → help only when bot was intentionally pinged alone-ish
       }
-      const reply = ultimateFaqReply(cleaned || 'help');
-      await message.reply(reply).catch(() => {});
+      let reply = await askOpenAI(cleaned || 'help');
+      if (!reply) reply = ultimateFaqReply(cleaned || 'help');
+      await message.reply(reply.slice(0, 1900)).catch(() => {});
     }
   } catch (e) {
     console.error('faq:', e.message);
@@ -911,6 +1671,7 @@ client.on('messageCreate', async (message) => {
   // ========== Vouch channel auto-thanks ==========
   try {
     if (
+      VOUCH_CHANNEL_ID &&
       String(message.channel.id) === String(VOUCH_CHANNEL_ID) &&
       !message.author.bot &&
       /\b(got|vouch|legit)\b/i.test(message.content)
@@ -918,6 +1679,7 @@ client.on('messageCreate', async (message) => {
       await message.reply('***Thanks for vouching ❤️***').catch(() => {});
     }
   } catch (_) {}
+
 
   // ========== ANTI MASS-PING ==========
   // If the same user is mentioned 3+ times quickly by one person → 3 day timeout
@@ -1652,7 +2414,7 @@ if (sub === 'clear') {
   // $ultimate cf <amt> <head|tail> → coin flip
   // $ultimate daily           → claim daily reward
   // $ultimate top             → richest users
-  if (cmd === 'ultimate') {
+  if (cmd === 'ultimate' || cmd === 'cozy' || cmd === 'ultimate' || cmd === 'economy') {
     const sub = (args[0] || '').toLowerCase();
 
     // ---- $ultimate add <amount> [@user] ----
@@ -2160,7 +2922,7 @@ if (sub === 'clear') {
       { id: HEAD_ADMIN_ROLE_ID, label: '🛡️ Head Admin', key: 'headadmin' },
       { id: ADMIN_ROLE_ID, label: '⚔️ Admin', key: 'admin' },
       { id: STAFF_TEAM_ROLE_ID, label: '👥 Staff Team', key: 'staffteam' }
-    ].filter((r) => r.id); // only keep configured ones
+    ].filter((r) => r.id);
 
     if (!staffRoleConfig.length) {
       return message.reply(
@@ -2362,12 +3124,18 @@ if (sub === 'clear') {
   function buildHitEmbed(hit) {
     const hyp = hit.hypixel || 'Not Available';
     const don = hit.donut || 'Not Available';
-    return new EmbedBuilder()
+    const ign = hit.username || null;
+    const embed = new EmbedBuilder()
       .setColor(0x3b82f6)
       .setAuthor({ name: 'Ultimate Rewards • Hit' })
       .addFields(
         { name: '📧 Email', value: `||${hit.email}||`, inline: false },
         { name: '🔑 Password', value: `||${hit.pass}||`, inline: false },
+        {
+          name: '🧑 IGN',
+          value: ign ? `**${ign}**` : '_not set — add as email:pass:Username_',
+          inline: false
+        },
         { name: '🐯 Type', value: 'MCFA', inline: false },
         { name: '🛡️ Hypixel', value: `📢 **${hyp}**`, inline: true },
         {
@@ -2386,6 +3154,17 @@ if (sub === 'clear') {
       )
       .setFooter({ text: 'Verified by Ultimate Rewards ⭐⭐⭐⭐⭐' })
       .setTimestamp(hit.uploadedAt ? new Date(hit.uploadedAt) : new Date());
+
+    // Public skin (no login) via mc-heads
+    if (ign) {
+      embed.setThumbnail(
+        `https://mc-heads.net/avatar/${encodeURIComponent(ign)}/128`
+      );
+      embed.setImage(
+        `https://mc-heads.net/body/${encodeURIComponent(ign)}/120`
+      );
+    }
+    return embed;
   }
 
   async function stopHitRunner(msg, channel) {
@@ -2508,15 +3287,29 @@ if (sub === 'clear') {
       if (!['hypixel', 'hyp', 'donut', 'both', 'all'].includes(kind)) {
         return message.reply(
           'Usage:\n' +
-            '`$hit add hypixel email:pass email:pass`\n' +
-            '`$hit add donut email:pass ...`\n' +
-            '`$hit add both email:pass ...`'
+            '`$hit add hypixel email:pass:Username`\n' +
+            '`$hit add donut email:pass:Username`\n' +
+            '`$hit add both email:pass` (username optional for skin)'
         );
       }
       const rest = body.slice(body.toLowerCase().indexOf(kind) + kind.length).trim();
-      const accounts = parseAccounts(rest);
-      if (!accounts.length) {
-        return message.reply('No `email:pass` found.');
+      const rawItems = rest
+        .replace(/\|\|/g, ' ')
+        .replace(/,/g, '\n')
+        .split(/\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const entries = [];
+      for (const item of rawItems) {
+        const e = parseHitEntry(item);
+        if (e) entries.push(e);
+      }
+      if (!entries.length) {
+        return message.reply(
+          'No entries found.\n' +
+            'Format: `email:pass` or `email:pass:MCUsername`\n' +
+            'Example: `$hit add hypixel a@b.com:Secret1:Steve`'
+        );
       }
       let hyp = 'Not Available';
       let don = 'Not Available';
@@ -2527,11 +3320,11 @@ if (sub === 'clear') {
         don = 'Available';
       }
       if (!data.hits) data.hits = [];
-      for (const acc of accounts) {
-        const idx = acc.indexOf(':');
+      for (const e of entries) {
         data.hits.push({
-          email: acc.slice(0, idx),
-          pass: acc.slice(idx + 1),
+          email: e.email,
+          pass: e.pass,
+          username: e.username || null,
           type: 'MCFA',
           hypixel: hyp,
           donut: don,
@@ -2539,9 +3332,10 @@ if (sub === 'clear') {
           by: message.author.id
         });
       }
+      const withName = entries.filter((e) => e.username).length;
       saveData();
       return message.reply(
-        `Added **${accounts.length}** hit(s) · Hypixel: **${hyp}** · Donut: **${don}** · Queue: **${data.hits.length}**`
+        `Added **${entries.length}** hit(s) (**${withName}** with IGN/skin) · Hypixel: **${hyp}** · Donut: **${don}** · Queue: **${data.hits.length}**`
       );
     }
 
@@ -2761,24 +3555,31 @@ if (sub === 'clear') {
       }
 
       // user applying
-      if (!isTicketChannel(message.channel)) {
-        return message.reply('`$staff apply` only works **inside a ticket**.');
+      if (!isStaffApplyChannel(message.channel) && !isTicketChannel(message.channel)) {
+        return message.reply(
+          '`$staff apply` only works in a **staff-apply** ticket (name starts with `staff-apply`).'
+        );
+      }
+      if (!isStaffApplyChannel(message.channel)) {
+        return message.reply(
+          'Open / use a ticket whose name starts with **`staff-apply`**, then run `$staff apply`.'
+        );
       }
       if (!data.staffApplyOpen) {
         return message.reply('**Staff apply is currently closed !**');
       }
 
       const questions = [
-        'How long have you been in Ultimate Rewards?',
-        'Why do you want to become staff?',
-        'What makes you a good fit for the staff team?',
-        'Have you had any previous staff experience?',
-        'How active are you on Discord?',
-        'How would you handle someone breaking the rules?',
-        'What would you do if two members were arguing?',
-        'How would you handle a friend breaking the rules?',
+        'How long have you been in Ultimate Rewards / this community?',
+        'Why do you want to join the staff team?',
+        'What skills or strengths make you a strong staff candidate?',
+        'Have you had any previous staff / moderation experience? (where & what)',
+        'How many hours per day/week can you be active on Discord?',
+        'How would you handle a member clearly breaking the rules?',
+        'Two members are arguing in chat — what do you do step by step?',
+        'Your close friend breaks a rule — how do you handle it fairly?',
         'How would you deal with a difficult or disrespectful member?',
-        'Why should we choose you as a staff member?',
+        'Why should Ultimate Rewards choose *you* over other applicants?',
         'Full form of MCFA, SMFA, NFA, FA?',
         'Will you use stocks as your salary?'
       ];
@@ -2831,23 +3632,12 @@ if (sub === 'clear') {
 
       await message.channel.send({ embeds: [embed] });
 
-      // Ping online co-owner+
-      try {
-        await message.guild.members.fetch();
-      } catch (_) {}
-      const onlineStaff = message.guild.members.cache.filter((m) => {
-        if (m.user.bot) return false;
-        if (!isCoOwnerOrAbove(m)) return false;
-        const s = m.presence?.status;
-        return s && ['online', 'idle', 'dnd'].includes(s);
-      });
-      const pings = onlineStaff.size
-        ? [...onlineStaff.values()].slice(0, 15).map((m) => `<@${m.id}>`).join(' ')
-        : (CO_OWNER_ROLE_ID ? `<@&${CO_OWNER_ROLE_ID}>` : '@staff');
-
+      const ownerPing = OWNER_ROLE_ID ? `<@&${OWNER_ROLE_ID}>` : '@owner';
       await message.channel.send(
-        `${pings}\n${message.author}'s **staff apply** questions are ready...`
+        `${ownerPing}
+${message.author}'s **staff application is ready** — please review.`
       );
+
       return;
     }
 
@@ -3040,11 +3830,428 @@ if (sub === 'clear') {
     );
   }
 
+
+  // ========== $cstatus — check free-gen status requirement ==========
+  if (cmd === 'cstatus') {
+    const member = message.member;
+    if (!member) return message.reply('Members only.');
+    const custom = member.presence?.activities?.find((a) => a.type === 4); // Custom
+    const statusText = custom?.state || '';
+    const ok = statusText && statusText.includes(FREE_STATUS_TEXT);
+    const role = message.guild.roles.cache.get(FREE_GEN_ROLE_ID);
+    const hasRole = role && member.roles.cache.has(FREE_GEN_ROLE_ID);
+
+    if (ok) {
+      if (role && !hasRole) {
+        await member.roles.add(role).catch(() => {});
+      }
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x57f287)
+            .setTitle('✅ Status check')
+            .setDescription(
+              `Your status matches:\n\`${FREE_STATUS_TEXT}\`\n\n` +
+                `Free gen role: **${hasRole || role ? 'YES' : 'added'}** <@&${FREE_GEN_ROLE_ID}>\n` +
+                `Use \`$fgen <product>\` e.g. \`$fgen mcfa\``
+            )
+        ]
+      });
+    }
+    if (role && hasRole) {
+      await member.roles.remove(role).catch(() => {});
+    }
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle('❌ Status not set')
+          .setDescription(
+            `Set your **custom status** exactly including:\n\`\`\`\n${FREE_STATUS_TEXT}\n\`\`\`\n` +
+              `Then run \`$cstatus\` again.\n\n` +
+              `**Paid gen:** $3 — open a ticket and ping <@&${OWNZ_ROLE_ID}>`
+          )
+      ]
+    });
+  }
+
+  // ========== $fgen / $pgen — gen DM (free OR paid role) ==========
+  if (cmd === 'fgen' || cmd === 'pgen' || cmd === 'paidgen') {
+    const member = message.member;
+    if (!member) return message.reply('Members only.');
+
+    const hasFree = member.roles.cache.has(FREE_GEN_ROLE_ID);
+    const hasPaid = member.roles.cache.has(PAID_GEN_ROLE_ID);
+    const isStaffUser = isStaff(member);
+
+    // $pgen with no product → how to buy
+    if ((cmd === 'pgen' || cmd === 'paidgen') && !args[0]) {
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xfee75c)
+            .setTitle('💎 Paid Gen')
+            .setDescription(
+              `**Price:** $3 USD\n` +
+                `1. Open a **ticket**\n` +
+                `2. Ping <@&${OWNZ_ROLE_ID}> (**Ownz**)\n` +
+                `3. Pay → get <@&${PAID_GEN_ROLE_ID}>\n` +
+                `4. Then run: \`$pgen mcfa\` or \`$fgen mcfa\`\n\n` +
+                `Website: ${ULTIMATE_WEB}`
+            )
+        ]
+      });
+    }
+
+    if (!hasFree && !hasPaid && !isStaffUser) {
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xed4245)
+            .setTitle('❌ No gen access')
+            .setDescription(
+              `**Free:** status \`${FREE_STATUS_TEXT}\` → \`$cstatus\`\n` +
+                `**Paid:** $3 → role <@&${PAID_GEN_ROLE_ID}> → \`$pgen mcfa\``
+            )
+        ]
+      });
+    }
+
+    const product = resolveProductKey(args[0] || 'mcfa') || 'mcfa';
+    const meta = PRODUCT_STOCKS[product];
+    if (!meta) return message.reply('Unknown product. Try: mcfa, xbox, netflix, crunchyroll, …');
+    const taken = await takeFromStock(product, 1);
+    if (!taken) {
+      return message.reply(`**${meta.label}** stock is empty. Try another product or wait for restock.`);
+    }
+    const ok = await deliverProductWithVouch(message, message.author, product, taken, true);
+    if (!ok) {
+      const arr = getStock(product);
+      arr.unshift(taken[0]);
+      setStock(product, arr);
+      saveData();
+      return message.reply('Could not DM you — open your DMs and try again. Stock restored.');
+    }
+    const tier = hasPaid ? 'Paid' : hasFree ? 'Free' : 'Staff';
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(hasPaid ? 0xfee75c : 0x57f287)
+          .setTitle(`✅ ${tier} gen sent`)
+          .setDescription(
+            `**${meta.emoji} ${meta.label}** sent to your **DMs**.\n# ARE WE LEGIT?\nCheck your DMs.`
+          )
+      ]
+    });
+  }
+
+  // ========== $msg — set / post role tutorial ==========
+  if (cmd === 'msg') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    if (!data.msgFree) data.msgFree = '';
+    if (!data.msgPaid) data.msgPaid = '';
+
+    const sub = (args[0] || '').toLowerCase();
+    const sub2 = (args[1] || '').toLowerCase();
+
+    // $msg free set <text>
+    // $msg paid set <text>
+    // $msg set free <text>  (alt)
+    // $msg free  → post free embed
+    // $msg paid  → post paid embed
+    // $msg       → post both
+
+    const isFree = sub === 'free' || sub2 === 'free';
+    const isPaid = sub === 'paid' || sub2 === 'paid';
+    const isSet = sub === 'set' || sub2 === 'set';
+
+    if (isSet && (isFree || isPaid || sub === 'set')) {
+      // Find text after "set"
+      const idx = body.toLowerCase().indexOf('set');
+      let rest = idx >= 0 ? body.slice(idx + 3).trim() : '';
+      // strip leading free/paid keyword if present after set
+      rest = rest.replace(/^(free|paid)\s+/i, '').trim();
+      // if order was $msg free set ...
+      if ((sub === 'free' || sub === 'paid') && sub2 === 'set') {
+        const i2 = body.toLowerCase().indexOf('set');
+        rest = i2 >= 0 ? body.slice(i2 + 3).trim() : rest;
+      }
+      if (!rest) {
+        return message.reply(
+          'Usage:\n' +
+            '`$msg free set <text>`\n' +
+            '`$msg paid set <text>`'
+        );
+      }
+      if (isFree || (sub === 'set' && args[1]?.toLowerCase() === 'free')) {
+        data.msgFree = rest;
+        saveData();
+        return message.reply('✅ **Free Gen** tutorial text saved. Post with `$msg free`.');
+      }
+      if (isPaid || (sub === 'set' && args[1]?.toLowerCase() === 'paid')) {
+        data.msgPaid = rest;
+        saveData();
+        return message.reply('✅ **Paid Gen** tutorial text saved. Post with `$msg paid`.');
+      }
+      // bare $msg set → save as free by default
+      data.msgFree = rest;
+      saveData();
+      return message.reply('Saved as **Free** text. Use `$msg free set` / `$msg paid set` for separate ones.');
+    }
+
+    const defaultFree =
+      `Add our status text to your **Discord custom status** to get instant access to **Free Gen**!\n\n` +
+      `📌 **Copy & Paste status text below:**\n` +
+      `\`\`\`\n${FREE_STATUS_TEXT}\n\`\`\`\n` +
+      `➡️ **Once updated**, your **Free Gen** role will be granted automatically!\n` +
+      `(Or run \`$cstatus\` to check / refresh.)\n\n` +
+      `Then use \`$fgen mcfa\` (or xbox / netflix / …) to receive stock in **DMs**.`;
+
+    const defaultPaid =
+      `**Price: $3 USD**\n\n` +
+      `1️⃣ Create a **ticket**\n` +
+      `2️⃣ Pay **$3** to **Ownz** <@&${OWNZ_ROLE_ID}>\n` +
+      `3️⃣ Staff will give you the **Paid Gen** role <@&${PAID_GEN_ROLE_ID}>\n\n` +
+      `Website: ${ULTIMATE_WEB}`;
+
+    const freeEmbed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle('🟢 ACCESS FREE GEN')
+      .setDescription((data.msgFree || defaultFree).slice(0, 4000))
+      .setFooter({ text: 'Ultimate Rewards / Ultimate Rewards' })
+      .setTimestamp();
+
+    const paidEmbed = new EmbedBuilder()
+      .setColor(0xfee75c)
+      .setTitle('💎 ACCESS PAID GEN')
+      .setDescription((data.msgPaid || defaultPaid).slice(0, 4000))
+      .setFooter({ text: 'Ultimate Rewards / Ultimate Rewards' })
+      .setTimestamp();
+
+    if (sub === 'free') {
+      return message.channel.send({ embeds: [freeEmbed] });
+    }
+    if (sub === 'paid') {
+      return message.channel.send({ embeds: [paidEmbed] });
+    }
+    if (!sub) {
+      return message.channel.send({ embeds: [freeEmbed, paidEmbed] });
+    }
+
+    return message.reply(
+      '**Tutorial embeds**\n' +
+        '`$msg free set <text>` — save Free Gen message\n' +
+        '`$msg paid set <text>` — save Paid Gen message\n' +
+        '`$msg free` — post Free embed\n' +
+        '`$msg paid` — post Paid embed\n' +
+        '`$msg` — post both'
+    );
+  }
+
+
+
+
+  // ========== $mclaim — message milestone rewards (tickets) ==========
+  if (cmd === 'mclaim') {
+    if (!isTicketChannel(message.channel) && !isStaffApplyChannel(message.channel)) {
+      return message.reply('`$mclaim` only works **inside tickets**.');
+    }
+    const gid = message.guild.id;
+    const uid = message.author.id;
+    const msgs = data.messages[gid]?.[uid] || 0;
+    const eligible = MESSAGE_REWARDS.filter((r) => msgs >= r.messages);
+    const lines = MESSAGE_REWARDS.map((r) => {
+      const ok = msgs >= r.messages ? '✅' : '🔒';
+      return `${ok} \`${r.id}.\` **${r.messages.toLocaleString()} msgs** → **${r.name}**`;
+    });
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle('💬 Message rewards')
+      .setDescription(
+        `**Your messages (bot-tracked):** \`${msgs.toLocaleString()}\`\n` +
+          `_Meaningful chat only — staff verify before pay._\n\n` +
+          lines.join('\n') +
+          `\n\nReply with a **number** to request that reward (staff will confirm).`
+      )
+      .setFooter({ text: 'Ultimate Rewards • Methods are message rewards' });
+    await message.channel.send({ content: `${message.author}`, embeds: [embed] });
+
+    if (!eligible.length) return;
+
+    const collector = message.channel.createMessageCollector({
+      filter: (m) => m.author.id === uid && !m.author.bot,
+      time: 5 * 60 * 1000,
+      max: 8
+    });
+    collector.on('collect', async (m) => {
+      const num = parseInt(m.content.trim(), 10);
+      const chosen = eligible.find((r) => r.id === num);
+      if (!chosen) {
+        await message.channel.send(`${message.author} Pick a number you unlocked.`).catch(() => {});
+        return;
+      }
+      collector.stop('ok');
+      const staffPing = STAFF_TEAM_ROLE_ID
+        ? `<@&${STAFF_TEAM_ROLE_ID}>`
+        : OWNER_ROLE_ID
+          ? `<@&${OWNER_ROLE_ID}>`
+          : '@staff';
+      await message.channel.send(
+        `${staffPing}\n${message.author} requests **message reward**: **${chosen.name}** ` +
+          `(need ${chosen.messages.toLocaleString()} · has ${msgs.toLocaleString()}).\n` +
+          `Staff: verify activity, then \`$pay\` / deliver method manually.`
+      );
+    });
+    return;
+  }
+
+
+  // ========== $inv — Falcon invites ==========
+  if (cmd === 'inv' || cmd === 'invites' || cmd === 'falcon') {
+    const user =
+      message.mentions.users.first() ||
+      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null))) ||
+      message.author;
+    const count = getUserInvites(message.guild.id, user.id);
+    const meta = data.falconInvites?.[message.guild.id]?.[user.id];
+    const name = user.username;
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle('📨 Invites (Falcon)')
+          .setDescription(
+            `**${name}**\n` +
+              `Invites: **${count}**\n` +
+              (meta?.at
+                ? `Last Falcon sync: <t:${Math.floor(new Date(meta.at).getTime() / 1000)}:R>\n`
+                : `Not synced yet — run Falcon \`-i ${name}\` in this server.\n`) +
+              `_Source: Falcon bot_`
+          )
+      ]
+    });
+  }
+
+  // ========== $m — messages (Falcon when synced) ==========
+  if (cmd === 'm' || cmd === 'messages' || cmd === 'msgcount') {
+    const user =
+      message.mentions.users.first() ||
+      (args[0] && (await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => null))) ||
+      message.author;
+    const count = data.messages[message.guild.id]?.[user.id] || 0;
+    const meta = data.falconMessages?.[message.guild.id]?.[user.id];
+    const name = user.username;
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle('💬 Messages')
+          .setDescription(
+            `**${name}**\n` +
+              `Messages: **${count.toLocaleString()}**\n` +
+              (meta?.at
+                ? `Last Falcon sync: <t:${Math.floor(new Date(meta.at).getTime() / 1000)}:R>\n`
+                : `Tracked by bot; also syncs when Falcon posts message stats.\n`) +
+              `_Use \`$mclaim\` in a ticket for message rewards._`
+          )
+      ]
+    });
+  }
+
+  // ========== $lb inv | $lb m — leaderboard (no pings) ==========
+  if (cmd === 'lb' || cmd === 'leaderboard') {
+    const sub = (args[0] || 'inv').toLowerCase();
+    const gid = message.guild.id;
+
+    if (sub === 'inv' || sub === 'invite' || sub === 'invites' || sub === 'i') {
+      const map = data.invites[gid] || {};
+      const sorted = Object.entries(map)
+        .map(([id, c]) => ({ id, c: Number(c) || 0 }))
+        .filter((x) => x.c > 0)
+        .sort((a, b) => b.c - a.c)
+        .slice(0, 15);
+      if (!sorted.length) {
+        return message.reply('No invite data yet. Sync with Falcon `-i`.');
+      }
+      await message.guild.members.fetch().catch(() => {});
+      const lines = sorted.map((x, i) => {
+        const mem = message.guild.members.cache.get(x.id);
+        const name = mem?.displayName || mem?.user?.username || `User ${x.id.slice(-4)}`;
+        return `**${i + 1}.** ${name} — **${x.c}** invites`;
+      });
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setTitle('🏆 Invite leaderboard (Falcon)')
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: 'Names only — no pings' })
+        ]
+      });
+    }
+
+    if (sub === 'm' || sub === 'msg' || sub === 'messages') {
+      const map = data.messages[gid] || {};
+      const sorted = Object.entries(map)
+        .map(([id, c]) => ({ id, c: Number(c) || 0 }))
+        .filter((x) => x.c > 0)
+        .sort((a, b) => b.c - a.c)
+        .slice(0, 15);
+      if (!sorted.length) {
+        return message.reply('No message data yet.');
+      }
+      await message.guild.members.fetch().catch(() => {});
+      const lines = sorted.map((x, i) => {
+        const mem = message.guild.members.cache.get(x.id);
+        const name = mem?.displayName || mem?.user?.username || `User ${x.id.slice(-4)}`;
+        return `**${i + 1}.** ${name} — **${x.c.toLocaleString()}** msgs`;
+      });
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x57f287)
+            .setTitle('🏆 Message leaderboard')
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: 'Names only — no pings' })
+        ]
+      });
+    }
+
+    return message.reply('`$lb inv` — invites · `$lb m` — messages');
+  }
+
+  // ========== $ai set #channel — AI only works there ==========
+  if (cmd === 'ai') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'set') {
+      const ch =
+        message.mentions.channels.first() ||
+        message.guild.channels.cache.get((args[1] || '').replace(/[<#>]/g, ''));
+      if (!ch) return message.reply('Usage: `$ai set #channel`');
+      data.aiChannelId = ch.id;
+      saveData();
+      return message.reply(`AI will only reply in ${ch}. Clear with \`$ai clear\`.`);
+    }
+    if (sub === 'clear') {
+      data.aiChannelId = null;
+      saveData();
+      return message.reply('AI channel lock cleared — AI works anywhere when @mentioned.');
+    }
+    if (sub === 'status' || !sub) {
+      if (data.aiChannelId) {
+        return message.reply(`AI channel: <#${data.aiChannelId}>`);
+      }
+      return message.reply('AI channel: **not set** (works in all channels when @mentioned).');
+    }
+    return message.reply('`$ai set #channel` · `$ai clear` · `$ai status`');
+  }
+
   // ========== $help ==========
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle('Staff Bot — Commands')
+      .setTitle('Ultimate Rewards Bot — Commands')
       .setDescription(
         [
           '**Leaderboard**',
@@ -3130,6 +4337,28 @@ client.on('channelCreate', async (channel) => {
   try {
     if (!channel.guild || channel.type !== ChannelType.GuildText) return;
     const name = (channel.name || '').toLowerCase();
+
+    // Staff-apply tickets → welcome + how to start (like $claim prompt)
+    if (name.startsWith('staff-apply') || name.startsWith('staffapply') || name.includes('staff-apply')) {
+      await new Promise((r) => setTimeout(r, 2000));
+      await channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setTitle('📋 Staff Application')
+            .setDescription(
+              `Welcome to **Ultimate Rewards** staff applications.\n\n` +
+                `Type \`$staff apply\` here to start the questions (1–12).\n` +
+                `Type \`cancel\` anytime to stop.\n\n` +
+                `Owner is pinged when you finish.`
+            )
+            .setFooter({ text: 'Ultimate Rewards • Staff Apply' })
+            .setTimestamp()
+        ]
+      }).catch(() => {});
+      return;
+    }
+
     const isTicket =
       name.startsWith('ticket-') ||
       name.startsWith('claim-') ||

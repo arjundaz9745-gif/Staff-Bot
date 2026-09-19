@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ultimate Rewards • Staff Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div id="gate" class="glass">
+      <h1>🔥 Ultimate Rewards</h1>
+      <p class="sub">Staff control panel · Discord login<br/>Owner / Manager / Staff or Admin / Manage Server</p>
+      <a class="btn" href="/auth/login">Login with Discord</a>
+      <p id="gateErr" class="err"></p>
+      <p class="sub" id="gateHint"></p>
+    </div>
+
+    <div id="app" class="hidden">
+      <div class="glass">
+        <h1>Ultimate Rewards Dashboard</h1>
+        <p class="sub">Hi <b id="me">…</b> · <span class="status" id="botStatus">…</span></p>
+        <div class="nav" id="nav">
+          <button type="button" data-tab="stats" class="active">Stats</button>
+          <button type="button" data-tab="stock">Stock</button>
+          <button type="button" data-tab="hits">Hits</button>
+          <button type="button" data-tab="economy">Economy</button>
+          <button type="button" data-tab="birthday">Birthday</button>
+          <button type="button" data-tab="settings">Settings</button>
+          <button type="button" data-tab="backup">Import / Export</button>
+        </div>
+      </div>
+
+      <section id="tab-stats" class="glass">
+        <h3>Invites & messages</h3>
+        <div class="row">
+          <div><label>Guild ID</label><input id="guildId" /></div>
+          <div><label>User ID</label><input id="userId" placeholder="Discord user id" /></div>
+        </div>
+        <div class="row">
+          <div><label>Invites</label><input id="invites" type="number" min="0" value="0" /></div>
+          <div><label>Messages</label><input id="messages" type="number" min="0" value="0" /></div>
+        </div>
+        <button type="button" class="btn" id="btnLoad">Load</button>
+        <button type="button" class="btn" id="btnSave">Save</button>
+        <p id="editMsg"></p>
+        <h3 style="margin-top:18px">Leaderboards</h3>
+        <button type="button" class="btn secondary" id="btnTopInv">Refresh invites</button>
+        <button type="button" class="btn secondary" id="btnTopMsg">Refresh messages</button>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <table><thead><tr><th>#</th><th>User</th><th>Inv</th></tr></thead><tbody id="topInv"></tbody></table>
+          </div>
+          <div>
+            <table><thead><tr><th>#</th><th>User</th><th>Msgs</th></tr></thead><tbody id="topMsg"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-stock" class="glass hidden">
+        <h3>Stock overview</h3>
+        <div class="stock-grid" id="stockGrid"></div>
+        <h3 style="margin-top:16px">Add stock lines</h3>
+        <label>Product</label>
+        <select id="stockProduct">
+          <option value="mcfa">MCFA</option>
+          <option value="xbox">Xbox</option>
+          <option value="netflix">Netflix</option>
+          <option value="crunchyroll">Crunchyroll</option>
+          <option value="nitro">Nitro</option>
+          <option value="donut">Donut</option>
+          <option value="hypixel">Hypixel</option>
+          <option value="steam">Steam</option>
+          <option value="custom">Custom</option>
+        </select>
+        <label>Lines (email:pass one per line)</label>
+        <textarea id="stockLines" placeholder="a@b.com:pass1&#10;c@d.com:pass2"></textarea>
+        <button type="button" class="btn" id="btnAddStock">Add to stock</button>
+        <p id="stockMsg"></p>
+      </section>
+
+      <section id="tab-hits" class="glass hidden">
+        <h3>Hits queue</h3>
+        <p class="sub">Count of queued hits in bot memory</p>
+        <p><b id="hitsCount">0</b> hits queued</p>
+        <button type="button" class="btn secondary" id="btnHitsRefresh">Refresh</button>
+        <button type="button" class="btn danger" id="btnHitsClear">Clear all hits</button>
+        <p id="hitsMsg"></p>
+      </section>
+
+      <section id="tab-economy" class="glass hidden">
+        <h3>Ultimate Economy</h3>
+        <div class="row">
+          <div><label>User ID</label><input id="ecoUser" /></div>
+          <div><label>Coins</label><input id="ecoCoins" type="number" min="0" value="0" /></div>
+        </div>
+        <button type="button" class="btn" id="btnEcoLoad">Load</button>
+        <button type="button" class="btn" id="btnEcoSave">Set coins</button>
+        <p id="ecoMsg"></p>
+      </section>
+
+      <section id="tab-birthday" class="glass hidden">
+        <h3>Birthday gift permission</h3>
+        <p class="sub">User ID allowed to run $birthday gift (plus owners)</p>
+        <label>Birthday user ID</label>
+        <input id="bdayUser" />
+        <button type="button" class="btn" id="btnBdaySave">Save</button>
+        <p id="bdayMsg"></p>
+      </section>
+
+      <section id="tab-settings" class="glass hidden">
+        <h3>Settings</h3>
+        <label>AI channel ID (empty = all channels)</label>
+        <input id="aiChannel" placeholder="Channel ID" />
+        <label>Auto export every (minutes, 0 = off)</label>
+        <input id="autoExportMin" type="number" min="0" value="0" />
+        <label>Auto-export channel ID (bot posts file there)</label>
+        <input id="autoExportChannel" placeholder="Channel ID" />
+        <button type="button" class="btn" id="btnSettingsSave">Save settings</button>
+        <p id="settingsMsg"></p>
+      </section>
+
+      <section id="tab-backup" class="glass hidden">
+        <h3>Import / Export</h3>
+        <p class="sub">Download full bot data JSON or upload to restore</p>
+        <a class="btn" id="btnExport" href="/api/export" download="ultimate-data.json">Download export</a>
+        <label style="margin-top:14px">Import JSON file</label>
+        <input type="file" id="importFile" accept="application/json,.json" />
+        <button type="button" class="btn" id="btnImport">Upload & apply</button>
+        <p id="backupMsg"></p>
+      </section>
+
+      <a class="btn danger" href="/auth/logout">Logout</a>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

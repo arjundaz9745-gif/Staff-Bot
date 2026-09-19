@@ -1,12 +1,16 @@
 {
   "name": "ultimate-staff-bot",
-  "version": "2.0.0",
-  "description": "Ultimate Rewards Staff Bot (Cozy features + OpenAI)",
-  "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "version": "2.1.0",
+  "description": "Ultimate Rewards Staff Bot + Dashboard (bot and website one project)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.7"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

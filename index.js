@@ -208,15 +208,16 @@ function getLoggedUid(req) {
 
 async function memberCanAccessDashboard(userId) {
   try {
-    if (!client?.guilds) return false;
+    if (!client?.isReady?.() && !client?.user) return false;
     const guildId = DEFAULT_GUILD_ID || client.guilds.cache.first()?.id;
     if (!guildId) return false;
-    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    const guild = client.guilds.cache.get(guildId) || (await client.guilds.fetch(guildId).catch(() => null));
     if (!guild) return false;
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) return false;
-    // Same rules as bot owner/staff commands
     if (isCoOwnerOrAbove(member) || isHeadAdminOrAbove(member) || isStaff(member)) return true;
+    // Server owner always
+    if (guild.ownerId && String(guild.ownerId) === String(userId)) return true;
     return false;
   } catch (e) {
     console.error('dash auth:', e.message);
@@ -241,119 +242,6 @@ function redirectUri(req) {
   return `${publicBase(req)}/auth/callback`;
 }
 
-function dashboardHtml(userTag) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Ultimate Rewards • Dashboard</title>
-<style>
-  :root { --bg:#0b0f1a; --card:#141b2d; --line:#243049; --text:#e8eefc; --muted:#8b9bb8; --acc:#5865f2; --ok:#57f287; }
-  *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,sans-serif;background:linear-gradient(160deg,#0b0f1a,#121a2f);color:var(--text);min-height:100vh}
-  .wrap{max-width:980px;margin:0 auto;padding:24px}
-  h1{font-size:1.4rem;margin:0 0 4px} .sub{color:var(--muted);margin-bottom:20px;font-size:.9rem}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
-  label{display:block;font-size:.8rem;color:var(--muted);margin:10px 0 4px}
-  input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0e1422;color:var(--text)}
-  button,.btn{cursor:pointer;border:0;border-radius:10px;padding:10px 16px;font-weight:600;background:var(--acc);color:#fff;margin-top:12px;margin-right:8px;text-decoration:none;display:inline-block}
-  button.secondary{background:#2b3550} button.danger{background:#ed4245}
-  table{width:100%;border-collapse:collapse;font-size:.9rem} th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left}
-  th{color:var(--muted)} .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#1e293b;font-size:.75rem}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:700px){.row{grid-template-columns:1fr}}
-  .status{font-size:.85rem;color:var(--ok)} .err{color:#ed4245} #gate{max-width:420px;margin:12vh auto;text-align:center}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div id="gate" class="card" style="display:none">
-    <h1>🔥 Ultimate Rewards</h1>
-    <p class="sub">Staff dashboard — login with Discord.<br/>Access = Owner / Manager / Staff roles or Admin / Manage Server perms.</p>
-    <a class="btn" id="loginBtn" href="/auth/login">Login with Discord</a>
-    <p id="gateErr" class="err"></p>
-  </div>
-  <div id="app" style="display:none">
-    <h1>Ultimate Rewards Dashboard</h1>
-    <p class="sub">Logged in as <b id="me">${userTag || '…'}</b> · edits sync to the bot live</p>
-    <p class="status" id="botStatus">Loading…</p>
-    <div class="card">
-      <h3 style="margin-top:0">Edit user stats</h3>
-      <div class="row">
-        <div><label>Guild ID</label><input id="guildId" placeholder="Server ID"/></div>
-        <div><label>Discord User ID</label><input id="userId" placeholder="User ID"/></div>
-      </div>
-      <div class="row">
-        <div><label>Invites</label><input id="invites" type="number" min="0" value="0"/></div>
-        <div><label>Messages</label><input id="messages" type="number" min="0" value="0"/></div>
-      </div>
-      <button onclick="loadUser()">Load</button>
-      <button onclick="saveUser()">Save to bot</button>
-      <p id="editMsg"></p>
-    </div>
-    <div class="card">
-      <h3 style="margin-top:0">Top invites</h3>
-      <button class="secondary" onclick="loadTop('inv')">Refresh</button>
-      <table><thead><tr><th>#</th><th>User ID</th><th>Invites</th></tr></thead><tbody id="topInv"></tbody></table>
-    </div>
-    <div class="card">
-      <h3 style="margin-top:0">Top messages</h3>
-      <button class="secondary" onclick="loadTop('msg')">Refresh</button>
-      <table><thead><tr><th>#</th><th>User ID</th><th>Messages</th></tr></thead><tbody id="topMsg"></tbody></table>
-    </div>
-    <a class="btn" style="background:#ed4245" href="/auth/logout">Logout</a>
-  </div>
-</div>
-<script>
-async function api(path, opts={}) {
-  const r = await fetch(path, { credentials:'same-origin', headers:{'Content-Type':'application/json'}, ...opts });
-  const j = await r.json().catch(()=>({}));
-  if (r.status === 401) { showGate(j.error); throw new Error(j.error||'auth'); }
-  if (!r.ok) throw new Error(j.error || r.statusText);
-  return j;
-}
-function showGate(err){
-  document.getElementById('gate').style.display='block';
-  document.getElementById('app').style.display='none';
-  if (err) document.getElementById('gateErr').textContent = err;
-}
-async function boot(){
-  const s = await api('/api/status');
-  if (!s.authed) return showGate(s.error||'');
-  document.getElementById('gate').style.display='none';
-  document.getElementById('app').style.display='block';
-  document.getElementById('me').textContent = s.userTag || s.userId || 'staff';
-  document.getElementById('botStatus').textContent = s.online ? ('Bot: '+(s.tag||'online')) : 'Bot starting…';
-  if (s.defaultGuildId) document.getElementById('guildId').value = s.defaultGuildId;
-  loadTop('inv'); loadTop('msg');
-}
-async function loadUser(){
-  const guildId = document.getElementById('guildId').value.trim();
-  const userId = document.getElementById('userId').value.trim();
-  const j = await api('/api/user?guildId='+encodeURIComponent(guildId)+'&userId='+encodeURIComponent(userId));
-  document.getElementById('invites').value = j.invites||0;
-  document.getElementById('messages').value = j.messages||0;
-  document.getElementById('editMsg').textContent = 'Loaded.';
-}
-async function saveUser(){
-  await api('/api/user', { method:'POST', body: JSON.stringify({
-    guildId: document.getElementById('guildId').value.trim(),
-    userId: document.getElementById('userId').value.trim(),
-    invites: Number(document.getElementById('invites').value||0),
-    messages: Number(document.getElementById('messages').value||0)
-  })});
-  document.getElementById('editMsg').innerHTML = '<span class="status">Saved — bot updated.</span>';
-  loadTop('inv'); loadTop('msg');
-}
-async function loadTop(kind){
-  const guildId = document.getElementById('guildId').value.trim();
-  const j = await api('/api/top?kind='+kind+'&guildId='+encodeURIComponent(guildId));
-  const tb = document.getElementById(kind==='inv'?'topInv':'topMsg');
-  tb.innerHTML = (j.rows||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td><span class="pill">'+r.userId+'</span></td><td><b>'+r.count+'</b></td></tr>').join('') || '<tr><td colspan=3>No data</td></tr>';
-}
-boot().catch(()=>showGate(''));
-</script>
-</body></html>`;
-}
 
 http
   .createServer(async (req, res) => {
@@ -450,9 +338,27 @@ http
         return;
       }
 
+      // Static site (index.html + css + js) — one project with the bot
       if (pathName === '/' || pathName === '/dashboard') {
+        const htmlPath = path.join(__dirname, 'public', 'index.html');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(dashboardHtml(''));
+        res.end(fs.readFileSync(htmlPath, 'utf8'));
+        return;
+      }
+      if (pathName === '/styles.css') {
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
+        res.end(fs.readFileSync(path.join(__dirname, 'public', 'styles.css'), 'utf8'));
+        return;
+      }
+      if (pathName === '/app.js' || pathName === '/script.js') {
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
+        res.end(fs.readFileSync(path.join(__dirname, 'public', 'app.js'), 'utf8'));
+        return;
+      }
+      if (pathName === '/bg-desktop.jpg' || pathName === '/bg-mobile.jpg') {
+        const img = path.join(__dirname, 'public', pathName.slice(1));
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+        res.end(fs.readFileSync(img));
         return;
       }
 
@@ -460,10 +366,19 @@ http
         const uid = getLoggedUid(req);
         let authed = false;
         let userTag = null;
+        let err;
+        let hint;
+        if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET) {
+          err = 'Missing DISCORD_CLIENT_ID or DISCORD_CLIENT_SECRET in Render env';
+          hint = 'Add OAuth credentials + redirect https://staff-bot-7gc5.onrender.com/auth/callback';
+        }
         if (uid) {
           authed = await memberCanAccessDashboard(uid);
-          if (!authed) dashSessions.delete(uid);
-          else userTag = dashSessions.get(uid)?.tag || uid;
+          if (!authed) {
+            dashSessions.delete(uid);
+            err = 'Logged in but not staff on this server';
+            hint = 'Need Owner/Manager/Staff role or Administrator / Manage Server. Set GUILD_ID correctly.';
+          } else userTag = dashSessions.get(uid)?.tag || uid;
         }
         return json(200, {
           online: !!(typeof client !== 'undefined' && client?.user),
@@ -473,7 +388,14 @@ http
           authed,
           userId: authed ? uid : null,
           userTag,
-          error: !OAUTH_CLIENT_ID ? 'Set DISCORD_CLIENT_ID + DISCORD_CLIENT_SECRET' : undefined
+          error: err,
+          hint,
+          settings: {
+            aiChannelId: data.aiChannelId || null,
+            autoExportMinutes: data.autoExportMinutes || 0,
+            autoExportChannelId: data.autoExportChannelId || null,
+            birthdayUserId: data.birthdayUserId || process.env.BIRTHDAY_USER_ID || null
+          }
         });
       }
 
@@ -533,6 +455,89 @@ http
         return json(200, { rows });
       }
 
+
+      if (pathName === '/api/stock' && req.method === 'GET') {
+        ensureStocks(data);
+        const stocks = {};
+        for (const key of Object.keys(PRODUCT_STOCKS || {})) {
+          stocks[key] = (data.stocks?.[key] || []).length;
+        }
+        return json(200, { stocks });
+      }
+      if (pathName === '/api/stock' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const product = resolveProductKey(body.product) || body.product;
+        if (!product || !PRODUCT_STOCKS[product]) return json(400, { error: 'Unknown product' });
+        ensureStocks(data);
+        const lines = String(body.lines || '')
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        if (!data.stocks[product]) data.stocks[product] = [];
+        data.stocks[product].push(...lines);
+        if (product === 'mcfa') data.mcfaStock = data.stocks.mcfa;
+        if (product === 'custom') data.customStock = data.stocks.custom;
+        saveData();
+        return json(200, { added: lines.length, total: data.stocks[product].length });
+      }
+      if (pathName === '/api/hits' && req.method === 'GET') {
+        return json(200, { count: (data.hits || []).length });
+      }
+      if (pathName === '/api/hits' && req.method === 'DELETE') {
+        data.hits = [];
+        saveData();
+        return json(200, { ok: true });
+      }
+      if (pathName === '/api/economy' && req.method === 'GET') {
+        const userId = url.searchParams.get('userId');
+        if (!userId) return json(400, { error: 'userId required' });
+        return json(200, { userId, coins: data.coins?.[userId] || 0 });
+      }
+      if (pathName === '/api/economy' && req.method === 'POST') {
+        const body = await parseBody(req);
+        if (!body.userId) return json(400, { error: 'userId required' });
+        if (!data.coins) data.coins = {};
+        data.coins[body.userId] = Math.max(0, parseInt(body.coins, 10) || 0);
+        saveData();
+        return json(200, { ok: true, coins: data.coins[body.userId] });
+      }
+      if (pathName === '/api/settings' && req.method === 'POST') {
+        const body = await parseBody(req);
+        if (body.aiChannelId !== undefined) data.aiChannelId = body.aiChannelId || null;
+        if (body.autoExportMinutes !== undefined) {
+          data.autoExportMinutes = Math.max(0, parseInt(body.autoExportMinutes, 10) || 0);
+        }
+        if (body.autoExportChannelId !== undefined) {
+          data.autoExportChannelId = body.autoExportChannelId || null;
+        }
+        if (body.birthdayUserId !== undefined) {
+          data.birthdayUserId = body.birthdayUserId || null;
+        }
+        saveData();
+        scheduleAutoExport();
+        return json(200, { ok: true });
+      }
+      if (pathName === '/api/export' && req.method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Disposition': 'attachment; filename="ultimate-data.json"'
+        });
+        res.end(JSON.stringify(data, null, 2));
+        return;
+      }
+      if (pathName === '/api/import' && req.method === 'POST') {
+        const body = await parseBody(req);
+        if (!body || typeof body !== 'object') return json(400, { error: 'Invalid JSON' });
+        // merge carefully
+        for (const k of Object.keys(body)) {
+          data[k] = body[k];
+        }
+        ensureStocks(data);
+        saveData();
+        scheduleAutoExport();
+        return json(200, { ok: true });
+      }
+
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not found');
     } catch (e) {
@@ -568,6 +573,9 @@ function loadData() {
       if (!d.falconMessages) d.falconMessages = {};
       if (!d.giveaways) d.giveaways = {};
       if (!d.aiChannelId) d.aiChannelId = null;
+      if (d.autoExportMinutes == null) d.autoExportMinutes = 0;
+      if (!d.autoExportChannelId) d.autoExportChannelId = null;
+      if (!d.birthdayUserId) d.birthdayUserId = null;
       return d;
     }
   } catch (e) {
@@ -604,6 +612,34 @@ function saveData() {
 
 let data = loadData();
 ensureStocks(data);
+
+let autoExportTimer = null;
+function scheduleAutoExport() {
+  if (autoExportTimer) clearInterval(autoExportTimer);
+  autoExportTimer = null;
+  const mins = Number(data.autoExportMinutes || 0);
+  if (!mins || mins < 1) return;
+  autoExportTimer = setInterval(async () => {
+    try {
+      const chId = data.autoExportChannelId;
+      if (!chId || !client?.isReady?.()) return;
+      const ch = await client.channels.fetch(chId).catch(() => null);
+      if (!ch || !ch.send) return;
+      const { AttachmentBuilder } = require('discord.js');
+      const buf = Buffer.from(JSON.stringify(data, null, 2), 'utf8');
+      await ch.send({
+        content: `📦 **Auto export** <t:${Math.floor(Date.now()/1000)}:R>`,
+        files: [new AttachmentBuilder(buf, { name: `ultimate-auto-export.json` })]
+      });
+    } catch (e) {
+      console.error('auto export:', e.message);
+    }
+  }, mins * 60 * 1000);
+  console.log('Auto export every', mins, 'minutes');
+}
+
+
+scheduleAutoExport();
 
 // In-memory anti-raid trackers (reset on restart – fine for short windows)
 const recentMentions = new Map(); // key: `${authorId}:${targetId}` → timestamps[]
@@ -2058,7 +2094,7 @@ if (sub === 'clear') {
     // $salary add — owners only, locked channel
     if ((args[0] || '').toLowerCase() === 'add') {
       const allowed =
-        message.author.id === BIRTHDAY_USER_ID || isCoOwnerOrAbove(message.member);
+        message.author.id === (data.birthdayUserId || BIRTHDAY_USER_ID) || isCoOwnerOrAbove(message.member);
       if (!allowed) return message.reply('Owners only.');
       if (String(message.channel.id) !== String(SALARY_ADD_CHANNEL_ID)) {
         return message.reply(`Use this only in <#${SALARY_ADD_CHANNEL_ID}>.`);
@@ -3494,7 +3530,7 @@ if (sub === 'clear') {
 
   // ========== $birthday gift send @user (owner only) ==========
   if (cmd === 'birthday') {
-    if (message.author.id !== BIRTHDAY_USER_ID) {
+    if (message.author.id !== (data.birthdayUserId || BIRTHDAY_USER_ID)) {
       return message.reply('Only the designated owner can use birthday gifts.');
     }
     const sub = (args[0] || '').toLowerCase();

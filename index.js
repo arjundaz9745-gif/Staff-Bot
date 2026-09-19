@@ -14,7 +14,9 @@ const {
   ComponentType,
   ChannelType,
   PermissionsBitField,
-  AttachmentBuilder
+  AttachmentBuilder,
+  SlashCommandBuilder,
+  Collection
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;

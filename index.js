@@ -357,6 +357,12 @@ http
         res.end(fs.readFileSync(path.join(__dirname, 'public', 'app.js'), 'utf8'));
         return;
       }
+      if (pathName === '/logo.png') {
+        const img = path.join(__dirname, 'public', 'logo.png');
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
+        res.end(fs.readFileSync(img));
+        return;
+      }
       if (pathName === '/bg-desktop.jpg' || pathName === '/bg-mobile.jpg') {
         const img = path.join(__dirname, 'public', pathName.slice(1));
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
@@ -382,16 +388,44 @@ http
             hint = 'Need Owner/Manager/Staff role or Administrator / Manage Server. Set GUILD_ID correctly.';
           } else userTag = dashSessions.get(uid)?.tag || uid;
         }
+        let guildInfo = null;
+        const gid = DEFAULT_GUILD_ID || client?.guilds?.cache?.first()?.id;
+        if (client?.guilds && gid) {
+          const g = client.guilds.cache.get(gid);
+          if (g) {
+            guildInfo = {
+              id: g.id,
+              name: g.name,
+              memberCount: g.memberCount,
+              channels: g.channels?.cache?.size,
+              roles: g.roles?.cache?.size
+            };
+          }
+        }
+        if (!data.protection) {
+          data.protection = { antinuke: true, antibetray: true, automod: false, badWords: 'scam,fuck' };
+        }
+        let avatar = null;
+        if (uid) {
+          avatar = `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(uid) >> 22n) % 6}.png`;
+          try {
+            const u = await client.users.fetch(uid).catch(() => null);
+            if (u) avatar = u.displayAvatarURL({ size: 128 });
+          } catch (_) {}
+        }
         return json(200, {
           online: !!(typeof client !== 'undefined' && client?.user),
           tag: client?.user?.tag || null,
           guilds: client?.guilds?.cache?.size || 0,
-          defaultGuildId: DEFAULT_GUILD_ID || client?.guilds?.cache?.first()?.id || '',
+          defaultGuildId: gid || '',
           authed,
           userId: authed ? uid : null,
           userTag,
+          avatar,
+          guild: guildInfo,
           error: err,
           hint,
+          protection: data.protection,
           settings: {
             aiChannelId: data.aiChannelId || null,
             autoExportMinutes: data.autoExportMinutes || 0,
@@ -458,6 +492,17 @@ http
       }
 
 
+      if (pathName === '/api/protection' && req.method === 'POST') {
+        const body = await parseBody(req);
+        data.protection = {
+          antinuke: !!body.antinuke,
+          antibetray: !!body.antibetray,
+          automod: !!body.automod,
+          badWords: String(body.badWords || data.protection?.badWords || 'scam,fuck')
+        };
+        saveData();
+        return json(200, { ok: true, protection: data.protection });
+      }
       if (pathName === '/api/stock' && req.method === 'GET') {
         ensureStocks(data);
         const stocks = {};
@@ -574,6 +619,7 @@ function loadData() {
       if (!d.falconInvites) d.falconInvites = {};
       if (!d.falconMessages) d.falconMessages = {};
       if (!d.giveaways) d.giveaways = {};
+      if (!d.protection) d.protection = { antinuke: true, antibetray: true, automod: false, badWords: 'scam,fuck' };
       if (!d.aiChannelId) d.aiChannelId = null;
       if (d.autoExportMinutes == null) d.autoExportMinutes = 0;
       if (!d.autoExportChannelId) d.autoExportChannelId = null;
@@ -1722,7 +1768,7 @@ client.on('messageCreate', async (message) => {
   // ========== ANTI MASS-PING ==========
   // If the same user is mentioned 3+ times quickly by one person → 3 day timeout
   try {
-    if (message.mentions.users.size > 0 && message.member && message.guild.members.me?.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+    if (data.protection?.antinuke !== false && message.mentions.users.size > 0 && message.member && message.guild.members.me?.permissions.has(PermissionFlagsBits.ModerateMembers)) {
       const now = Date.now();
       for (const [targetId] of message.mentions.users) {
         if (targetId === message.author.id) continue; // ignore self-pings
@@ -1813,6 +1859,29 @@ client.on('messageCreate', async (message) => {
     }
   } catch (e) {
     console.error('Counting error:', e.message);
+  }
+
+  
+  // AUTOMOD_BADWORDS_HOOK
+  if (
+    data.protection?.automod &&
+    !message.author.bot &&
+    message.member &&
+    !isCoOwnerOrAbove(message.member)
+  ) {
+    const words = String(data.protection.badWords || '')
+      .split(',')
+      .map((w) => w.trim().toLowerCase())
+      .filter(Boolean);
+    const content = (message.content || '').toLowerCase();
+    if (words.some((w) => w && content.includes(w))) {
+      await message.delete().catch(() => {});
+      await message.channel
+        .send(`${message.author} watch your language.`)
+        .then((m) => setTimeout(() => m.delete().catch(() => {}), 5000))
+        .catch(() => {});
+      return;
+    }
   }
 
   if (!message.content.startsWith(PREFIX)) return;

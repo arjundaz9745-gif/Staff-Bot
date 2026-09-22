@@ -38,6 +38,8 @@ const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || '1547183164185911356'; // Adm
 const STAFF_TEAM_ROLE_ID = process.env.STAFF_TEAM_ROLE_ID || '1548173330794815599'; // Staff
 const REWARD_STAFF_ROLE_ID = process.env.REWARD_STAFF_ROLE_ID || '1548173330794815599';
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || ''; // optional: auto-prompt in new tickets
+const STAFF_CHAT_CHANNEL_ID = process.env.STAFF_CHAT_CHANNEL_ID || '1547183225317883954';
+const STAFF_CMD_CHANNEL_ID = process.env.STAFF_CMD_CHANNEL_ID || '1547183226827702312';
 
 // Anti-raid settings
 const ANTIRAID_LOG_CHANNEL_ID = process.env.ANTIRAID_LOG_CHANNEL_ID || ''; // optional log channel
@@ -564,6 +566,136 @@ http
         scheduleAutoExport();
         return json(200, { ok: true });
       }
+
+      // ===== Dashboard: tickets, channels, chat, toggles =====
+      if (pathName === '/api/tickets' && req.method === 'GET') {
+        const gid = DEFAULT_GUILD_ID || client?.guilds?.cache?.first()?.id;
+        const guild = gid ? await client.guilds.fetch(gid).catch(() => null) : null;
+        if (!guild) return json(200, { tickets: [] });
+        await guild.channels.fetch().catch(() => {});
+        const tickets = [];
+        for (const [, ch] of guild.channels.cache) {
+          if (ch.type !== 0 && ch.type !== 5) continue; // text / announcement
+          const n = (ch.name || '').toLowerCase();
+          if (
+            n.includes('ticket') ||
+            n.startsWith('closed-') ||
+            n.includes('support') ||
+            n.startsWith('staff-apply') ||
+            (TICKET_CATEGORY_ID && String(ch.parentId) === String(TICKET_CATEGORY_ID))
+          ) {
+            tickets.push({
+              id: ch.id,
+              name: ch.name,
+              parent: ch.parent?.name || null,
+              topic: ch.topic || null
+            });
+          }
+        }
+        tickets.sort((a, b) => a.name.localeCompare(b.name));
+        return json(200, { tickets });
+      }
+
+      if (pathName === '/api/channels/staff' && req.method === 'GET') {
+        return json(200, {
+          staffChat: STAFF_CHAT_CHANNEL_ID,
+          staffCmd: STAFF_CMD_CHANNEL_ID
+        });
+      }
+
+      if (pathName === '/api/messages' && req.method === 'GET') {
+        const channelId = url.searchParams.get('channelId');
+        if (!channelId) return json(400, { error: 'channelId required' });
+        const ch = await client.channels.fetch(channelId).catch(() => null);
+        if (!ch || !ch.isTextBased?.()) return json(404, { error: 'Channel not found' });
+        const limit = Math.min(50, parseInt(url.searchParams.get('limit') || '40', 10));
+        const msgs = await ch.messages.fetch({ limit }).catch(() => null);
+        if (!msgs) return json(500, { error: 'Cannot fetch messages' });
+        const list = [...msgs.values()]
+          .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+          .map((m) => ({
+            id: m.id,
+            content: m.content || (m.embeds?.[0]?.description ? '[embed] ' + (m.embeds[0].title || m.embeds[0].description).slice(0, 120) : m.attachments?.size ? '[attachment]' : ''),
+            author: m.author?.username || 'Unknown',
+            authorId: m.author?.id,
+            avatar: m.author?.displayAvatarURL?.({ size: 64 }) || null,
+            bot: !!m.author?.bot,
+            time: m.createdTimestamp
+          }));
+        return json(200, { channelId, name: ch.name, messages: list });
+      }
+
+      if (pathName === '/api/messages' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const channelId = body.channelId;
+        const content = String(body.content || '').trim().slice(0, 2000);
+        if (!channelId || !content) return json(400, { error: 'channelId + content required' });
+        const ch = await client.channels.fetch(channelId).catch(() => null);
+        if (!ch || !ch.isTextBased?.()) return json(404, { error: 'Channel not found' });
+        const sent = await ch.send({ content }).catch((e) => ({ error: e.message }));
+        if (sent.error) return json(500, { error: sent.error });
+        return json(200, { ok: true, id: sent.id });
+      }
+
+      if (pathName === '/api/toggles' && req.method === 'GET') {
+        if (!data.protection) data.protection = {};
+        if (!data.toggles) data.toggles = {};
+        return json(200, {
+          protection: {
+            antinuke: !!data.protection.antinuke,
+            antibetray: !!data.protection.antibetray,
+            automod: !!data.protection.automod,
+            antiraid: data.protection.antiraid !== false,
+            badWords: data.protection.badWords || 'scam,fuck'
+          },
+          toggles: {
+            staffApplyOpen: data.staffApplyOpen !== false,
+            aiEnabled: data.toggles.aiEnabled !== false,
+            hitsEnabled: data.toggles.hitsEnabled !== false,
+            giveawaysEnabled: data.toggles.giveawaysEnabled !== false,
+            freeGenEnabled: data.toggles.freeGenEnabled !== false,
+            paidGenEnabled: data.toggles.paidGenEnabled !== false,
+            claimEnabled: data.toggles.claimEnabled !== false,
+            autoTicketCleanup: data.toggles.autoTicketCleanup !== false
+          },
+          settings: {
+            aiChannelId: data.aiChannelId || '',
+            autoExportMinutes: data.autoExportMinutes || 0,
+            autoExportChannelId: data.autoExportChannelId || '',
+            birthdayUserId: data.birthdayUserId || ''
+          }
+        });
+      }
+
+      if (pathName === '/api/toggles' && req.method === 'POST') {
+        const body = await parseBody(req);
+        if (!data.protection) data.protection = {};
+        if (!data.toggles) data.toggles = {};
+        if (body.protection) {
+          for (const k of ['antinuke', 'antibetray', 'automod', 'antiraid']) {
+            if (body.protection[k] !== undefined) data.protection[k] = !!body.protection[k];
+          }
+          if (body.protection.badWords !== undefined) data.protection.badWords = String(body.protection.badWords);
+        }
+        if (body.toggles) {
+          for (const [k, v] of Object.entries(body.toggles)) {
+            if (k === 'staffApplyOpen') data.staffApplyOpen = !!v;
+            else data.toggles[k] = !!v;
+          }
+        }
+        if (body.settings) {
+          if (body.settings.aiChannelId !== undefined) data.aiChannelId = body.settings.aiChannelId || null;
+          if (body.settings.autoExportMinutes !== undefined)
+            data.autoExportMinutes = Math.max(0, parseInt(body.settings.autoExportMinutes, 10) || 0);
+          if (body.settings.autoExportChannelId !== undefined)
+            data.autoExportChannelId = body.settings.autoExportChannelId || null;
+          if (body.settings.birthdayUserId !== undefined) data.birthdayUserId = body.settings.birthdayUserId || null;
+          scheduleAutoExport?.();
+        }
+        saveData();
+        return json(200, { ok: true });
+      }
+
       if (pathName === '/api/export' && req.method === 'GET') {
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -791,20 +923,33 @@ async function updateTeamupPanel(channel, team) {
 
 
 const REWARD_TIERS = [
+  // Invite rewards
   { id: 1, invites: 2, name: 'MCFA', type: 'reward' },
   { id: 2, invites: 4, name: 'Xbox Code', type: 'reward' },
   { id: 3, invites: 5, name: 'MCFA — Hypixel Unbanned', type: 'reward' },
-  { id: 4, invites: 8, name: 'Netflix Premium — PC Login', type: 'reward' },
-  { id: 5, invites: 10, name: 'Crunchyroll Premium', type: 'reward' }
+  { id: 4, invites: 7, name: '3 Hotmail Accounts', type: 'reward' },
+  { id: 5, invites: 8, name: 'Stream Accounts', type: 'reward' },
+  { id: 6, invites: 10, name: 'Netflix Premium — PC Login', type: 'reward' },
+  { id: 7, invites: 12, name: 'Crunchyroll Premium', type: 'reward' },
+  // Exclusive method rewards (invite unlocks)
+  { id: 8, invites: 2, name: 'MC Redeem Code Method', type: 'method' },
+  { id: 9, invites: 4, name: 'Nitro Basic Yearly Method', type: 'method' },
+  { id: 10, invites: 5, name: 'MCFA Email Change Method', type: 'method' },
+  { id: 11, invites: 8, name: 'MCFA Password Change Method', type: 'method' },
+  { id: 12, invites: 12, name: '5,000 Robux Method', type: 'method' },
+  { id: 13, invites: 15, name: 'Amazon Prime Method', type: 'method' },
+  { id: 14, invites: 18, name: 'Legit Xbox Gift Card Method', type: 'method' },
+  { id: 15, invites: 20, name: '30× Boost Method', type: 'method' },
+  { id: 16, invites: 25, name: 'Free Website Hosting', type: 'method' }
 ];
 
-// Message milestone rewards (methods + extras) — staff verify; $mclaim in tickets
+// Message milestone rewards — staff verify; $mclaim in tickets
 const MESSAGE_REWARDS = [
   { id: 1, messages: 1000, name: '1 Method', type: 'method' },
   { id: 2, messages: 2000, name: '2 Methods', type: 'method' },
   { id: 3, messages: 5000, name: '1 MCFA', type: 'reward' },
-  { id: 4, messages: 7500, name: 'Any reward from the 2-invite list', type: 'choice' },
-  { id: 5, messages: 10000, name: 'Any reward from the 4-invite list', type: 'choice' },
+  { id: 4, messages: 7500, name: 'Any Reward from the 2 Invite Reward List', type: 'choice' },
+  { id: 5, messages: 10000, name: 'Any Reward from the 3 Invite Reward List', type: 'choice' },
   { id: 6, messages: 15000, name: '2 MCFAs', type: 'reward' }
 ];
 
@@ -813,7 +958,11 @@ const METHOD_CATALOG = [
   'Nitro Basic Yearly Method',
   'MCFA Email Change Method',
   'MCFA Password Change Method',
-  '5,000 Robux Method'
+  '5,000 Robux Method',
+  'Amazon Prime Method',
+  'Legit Xbox Gift Card Method',
+  '30× Boost Method',
+  'Free Website Hosting'
 ];
 
 

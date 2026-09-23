@@ -14,13 +14,34 @@ function productTheme(name) {
   if (n.includes('crunchy')) return 'theme-crunchy';
   if (n.includes('xbox')) return 'theme-xbox';
   if (n.includes('amazon') || n.includes('prime')) return 'theme-amazon';
-  if (n.includes('stream') || n.includes('twitch')) return 'theme-stream';
+  if (n.includes('stream') || n.includes('twitch') || n.includes('steam')) return 'theme-stream';
   if (n.includes('hotmail') || n.includes('outlook')) return 'theme-hotmail';
   if (n.includes('boost')) return 'theme-boost';
   if (n.includes('hosting') || n.includes('website')) return 'theme-hosting';
-  if (n.includes('custom')) return 'theme-custom';
+  if (n.includes('custom') || n.includes('donut')) return 'theme-custom';
   return 'theme-default';
 }
+
+function productImage(name) {
+  const n = String(name || '').toLowerCase();
+  // Free Unsplash photos (not official logos)
+  if (n.includes('robux') || n.includes('roblox'))
+    return 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&q=80';
+  if (n.includes('hypixel') || n.includes('minecraft') || n.includes('mcfa') || n.includes('mc redeem'))
+    return 'https://images.unsplash.com/photo-1587573089734-07cbd78fa4a0?w=400&q=80';
+  if (n.includes('nitro') || n.includes('boost') || n.includes('discord'))
+    return 'https://images.unsplash.com/photo-1614680376573-df3480f0c6ff?w=400&q=80';
+  if (n.includes('netflix') || n.includes('stream') || n.includes('crunchy'))
+    return 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=400&q=80';
+  if (n.includes('xbox') || n.includes('game') || n.includes('steam'))
+    return 'https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?w=400&q=80';
+  if (n.includes('amazon') || n.includes('prime'))
+    return 'https://images.unsplash.com/photo-1523474253046-8cd2748b5fd2?w=400&q=80';
+  if (n.includes('hosting') || n.includes('website'))
+    return 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400&q=80';
+  return 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=400&q=80';
+}
+
 
 let selectedMethodName = null;
 let selectedStockProduct = null;
@@ -192,7 +213,8 @@ async function loadStock() {
       const n = typeof v === 'object' ? (v.count ?? v.length ?? 0) : v;
       const theme = productTheme(k);
       const label = k.toUpperCase();
-      return `<div class="product-card ${theme}" data-stock="${k}">
+      const img = productImage(k);
+      return `<div class="product-card ${theme}" data-stock="${k}" style="background-image:linear-gradient(180deg,transparent 25%,rgba(0,0,0,.88)),url('${img}')">
         <span class="pc-badge">${n} left</span>
         <div class="pc-name">${label}</div>
         <div class="pc-meta">Tap to add stock</div>
@@ -251,7 +273,8 @@ async function loadMethods() {
       const has = !!saved[name]?.body || !!saved[name]?.length;
       const len = saved[name]?.length || 0;
       const theme = productTheme(name);
-      return `<div class="product-card ${theme}" data-method="${name.replace(/"/g, '&quot;')}">
+      const img = productImage(name);
+      return `<div class="product-card ${theme}" data-method="${name.replace(/"/g, '&quot;')}" style="background-image:linear-gradient(180deg,transparent 25%,rgba(0,0,0,.88)),url('${img}')">
         <span class="pc-badge">${has ? len + ' chars' : 'Empty'}</span>
         <div class="pc-name">${name}</div>
         <div class="pc-meta">${has ? 'Tap to edit' : 'Tap to add text'}</div>
@@ -474,6 +497,42 @@ document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSideb
 document.getElementById('featureHub')?.addEventListener('click', (e) => {
   const card = e.target.closest('[data-goto]');
   if (card) tab(card.getAttribute('data-goto'));
+});
+
+
+// Delegated clicks (more reliable on mobile)
+document.getElementById('stockCards')?.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-stock]');
+  if (!el) return;
+  document.querySelectorAll('#stockCards .product-card').forEach((c) => c.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedStockProduct = el.getAttribute('data-stock');
+  const ed = document.getElementById('stockEditor');
+  if (ed) {
+    ed.classList.remove('hidden');
+    document.getElementById('stockEditorTitle').textContent = 'Add stock · ' + selectedStockProduct.toUpperCase();
+    document.getElementById('stockLines').value = '';
+    document.getElementById('stockMsg').textContent = 'Selected ' + selectedStockProduct;
+  }
+});
+document.getElementById('methodCards')?.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-method]');
+  if (!el) return;
+  document.querySelectorAll('#methodCards .product-card').forEach((c) => c.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedMethodName = el.getAttribute('data-method');
+  const ed = document.getElementById('methodEditor');
+  if (ed) ed.classList.remove('hidden');
+  document.getElementById('methodEditorTitle').textContent = selectedMethodName;
+  document.getElementById('methodMsg').textContent = 'Loading…';
+  try {
+    const j = await api('/api/methods');
+    const full = (j.methods || []).find((x) => x.name === selectedMethodName);
+    document.getElementById('methodBody').value = full?.body || '';
+    document.getElementById('methodMsg').textContent = full?.body ? 'Loaded' : 'Empty — paste method text & Save';
+  } catch (err) {
+    document.getElementById('methodMsg').textContent = err.message;
+  }
 });
 
 boot().catch((e) => {

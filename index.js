@@ -529,6 +529,42 @@ http
         saveData();
         return json(200, { added: lines.length, total: data.stocks[product].length });
       }
+      if (pathName === '/api/methods' && req.method === 'GET') {
+        if (!data.methodTexts) data.methodTexts = {};
+        const list = Object.entries(data.methodTexts).map(([name, body]) => ({
+          name,
+          length: String(body || '').length,
+          preview: String(body || '').slice(0, 120),
+          body: String(body || '')
+        }));
+        return json(200, {
+          methods: list,
+          catalog: typeof METHOD_CATALOG !== 'undefined' ? METHOD_CATALOG : [],
+          inviteRewards: typeof REWARD_TIERS !== 'undefined' ? REWARD_TIERS : [],
+          messageRewards: typeof MESSAGE_REWARDS !== 'undefined' ? MESSAGE_REWARDS : []
+        });
+      }
+      if (pathName === '/api/methods' && req.method === 'POST') {
+        const body = await parseBody(req);
+        if (!data.methodTexts) data.methodTexts = {};
+        const action = String(body.action || 'set').toLowerCase();
+        const name = String(body.name || '').trim();
+        if (!name) return json(400, { error: 'name required' });
+        if (action === 'delete' || action === 'del') {
+          if (data.methodTexts[name]) {
+            delete data.methodTexts[name];
+            saveData();
+            return json(200, { ok: true, deleted: name });
+          }
+          return json(404, { error: 'not found' });
+        }
+        const content = String(body.content || body.text || '').trim();
+        if (!content) return json(400, { error: 'content required' });
+        data.methodTexts[name] = content;
+        saveData();
+        return json(200, { ok: true, name, length: content.length });
+      }
+
       if (pathName === '/api/hits' && req.method === 'GET') {
         return json(200, { count: (data.hits || []).length });
       }
@@ -743,6 +779,7 @@ function loadData() {
       if (!d.daily) d.daily = {};
       if (!d.counting) d.counting = {}; // { channelId: { current: number, lastUserId: string } }
       if (!d.teamups) d.teamups = {};
+      if (!d.methodTexts) d.methodTexts = {}; // name -> text body (unlimited)
       if (!Array.isArray(d.hits)) d.hits = [];
       if (!d.exportCounts) d.exportCounts = { mcfa: 0, custom: 0, hits: 0 };
       ensureStocks(d);
@@ -773,6 +810,7 @@ function loadData() {
     daily: {},
     counting: {},
     teamups: {},
+    methodTexts: {},
     hits: [],
     exportCounts: { mcfa: 0, custom: 0, hits: 0 },
     stocks: {},
@@ -945,12 +983,12 @@ const REWARD_TIERS = [
 
 // Message milestone rewards — staff verify; $mclaim in tickets
 const MESSAGE_REWARDS = [
-  { id: 1, messages: 1000, name: '1 Method', type: 'method' },
-  { id: 2, messages: 2000, name: '2 Methods', type: 'method' },
-  { id: 3, messages: 5000, name: '1 MCFA', type: 'reward' },
-  { id: 4, messages: 7500, name: 'Any Reward from the 2 Invite Reward List', type: 'choice' },
-  { id: 5, messages: 10000, name: 'Any Reward from the 3 Invite Reward List', type: 'choice' },
-  { id: 6, messages: 15000, name: '2 MCFAs', type: 'reward' }
+  { id: 1, messages: 300, name: 'MC Redeem Code Guide', type: 'method' },
+  { id: 2, messages: 350, name: '30× Boost Method', type: 'method' },
+  { id: 3, messages: 400, name: 'Nitro Method', type: 'method' },
+  { id: 4, messages: 450, name: 'Netflix Tips & Tricks', type: 'method' },
+  { id: 5, messages: 500, name: 'Legit Xbox Gift Card Giveaway', type: 'method' },
+  { id: 6, messages: 550, name: 'CC/VCC Safety & Legit Use Guide', type: 'method' }
 ];
 
 const METHOD_CATALOG = [
@@ -1166,12 +1204,40 @@ async function startRewardClaimFlow(channel, user) {
     else if (nameL.includes('steam')) productKey = 'steam';
     else if (nameL.includes('donut')) productKey = 'donut';
     else if (nameL.includes('hypixel')) productKey = 'hypixel';
-    else if (nameL.includes('method') || nameL.includes('robux')) {
-      await channel.send(
-        `${user} selected **${chosen.name}** (method reward).
-` +
-          `Staff will complete this manually. <@&${OWNER_ROLE_ID}>`
-      ).catch(() => {});
+    else if (nameL.includes('method') || nameL.includes('robux') || nameL.includes('guide') || nameL.includes('hosting') || nameL.includes('tips')) {
+      // Unlimited method text delivery (does not reduce stock)
+      if (!data.methodTexts) data.methodTexts = {};
+      const body = data.methodTexts[chosen.name] || data.methodTexts[chosen.name.toLowerCase()];
+      if (body) {
+        const deliverEmbed = new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle('📘 Method delivered')
+          .setDescription(
+            `**Reward:** ${chosen.name}\n` +
+              `**User:** ${user}\n\n` +
+              `Method text is unlimited — enjoy.`
+          )
+          .setFooter({ text: 'Ultimate Rewards • Method claim' })
+          .setTimestamp();
+        await channel.send({ content: `${user}`, embeds: [deliverEmbed] }).catch(() => {});
+        const chunks = [];
+        let remaining = String(body);
+        while (remaining.length > 0) {
+          chunks.push(remaining.slice(0, 1900));
+          remaining = remaining.slice(1900);
+        }
+        for (const c of chunks) {
+          await channel.send(c).catch(() => {});
+        }
+      } else {
+        await channel.send(
+          `${user} selected **${chosen.name}** (method reward).\n` +
+            `Method text is not set yet — staff will complete this. <@&${OWNER_ROLE_ID}>\n` +
+            `Staff: set with \`$method set <name> | your method text\``
+        ).catch(() => {});
+      }
+      const pingPayload = await pingOnlineRewardStaff(channel.guild, user, chosen.name);
+      if (pingPayload) await channel.send(pingPayload).catch(() => {});
       return;
     }
 
@@ -3156,6 +3222,86 @@ if (sub === 'clear') {
   }
 
 
+
+  // ========== $method (unlimited method text library) ==========
+  // $method list
+  // $method set <Exact Reward Name> | <method body>
+  // $method get <Exact Reward Name>
+  // $method del <Exact Reward Name>
+  if (cmd === 'method') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    if (!data.methodTexts) data.methodTexts = {};
+
+    const sub = (args[0] || '').toLowerCase();
+    if (!sub || sub === 'list') {
+      const keys = Object.keys(data.methodTexts);
+      if (!keys.length) {
+        return message.reply(
+          'No method texts saved yet.\n' +
+            'Add with:\n`$method set MC Redeem Code Method | your full method text here`'
+        );
+      }
+      return message.reply(
+        '**Saved methods (unlimited):**\n' + keys.map((k) => `• **${k}**`).join('\n')
+      );
+    }
+
+    if (sub === 'get') {
+      const name = body.slice(body.toLowerCase().indexOf('get') + 3).trim();
+      if (!name) return message.reply('Usage: `$method get <Exact Reward Name>`');
+      const t = data.methodTexts[name] || data.methodTexts[name.toLowerCase()];
+      if (!t) return message.reply(`No method text for **${name}**.`);
+      const chunks = [];
+      let rem = String(t);
+      while (rem.length) {
+        chunks.push(rem.slice(0, 1900));
+        rem = rem.slice(1900);
+      }
+      for (const c of chunks) await message.channel.send(c);
+      return;
+    }
+
+    if (sub === 'del' || sub === 'delete' || sub === 'remove') {
+      const name = body.slice(body.toLowerCase().indexOf(sub) + sub.length).trim();
+      if (!name) return message.reply('Usage: `$method del <Exact Reward Name>`');
+      if (data.methodTexts[name]) {
+        delete data.methodTexts[name];
+        saveData();
+        return message.reply(`Deleted method text for **${name}**.`);
+      }
+      return message.reply(`No method text named **${name}**.`);
+    }
+
+    if (sub === 'set' || sub === 'add') {
+      const rest = body.slice(body.toLowerCase().indexOf(sub) + sub.length).trim();
+      const sep = rest.indexOf('|');
+      if (sep < 1) {
+        return message.reply(
+          'Usage:\n`$method set MC Redeem Code Method | full method text here`\n' +
+            'Name must match the reward name exactly (see `$claim` list).'
+        );
+      }
+      const name = rest.slice(0, sep).trim();
+      const content = rest.slice(sep + 1).trim();
+      if (!name || !content) {
+        return message.reply('Need both a name and text after `|`.');
+      }
+      data.methodTexts[name] = content;
+      saveData();
+      return message.reply(
+        `Saved method text for **${name}** (${content.length} chars).\n` +
+          `This is **unlimited** — claims never reduce stock.`
+      );
+    }
+
+    return message.reply(
+      '`$method list` — saved methods\n' +
+        '`$method set <name> | <text>` — save/update\n' +
+        '`$method get <name>` — preview\n' +
+        '`$method del <name>` — delete'
+    );
+  }
+
   // ========== $claim ==========
   // In a ticket: show eligible rewards based on invites, then ping online staff
   if (cmd === 'claim') {
@@ -4347,21 +4493,50 @@ ${message.author}'s **staff application is ready** — please review.`
         return;
       }
       collector.stop('ok');
-      const staffPing = STAFF_TEAM_ROLE_ID
-        ? `<@&${STAFF_TEAM_ROLE_ID}>`
-        : OWNER_ROLE_ID
-          ? `<@&${OWNER_ROLE_ID}>`
-          : '@staff';
-      await message.channel.send(
-        `${staffPing}\n${message.author} requests **message reward**: **${chosen.name}** ` +
-          `(need ${chosen.messages.toLocaleString()} · has ${msgs.toLocaleString()}).\n` +
-          `Staff: verify activity, then \`$pay\` / deliver method manually.`
-      );
+      if (!data.methodTexts) data.methodTexts = {};
+      const body = data.methodTexts[chosen.name] || data.methodTexts[chosen.name.toLowerCase()];
+      if (body) {
+        await message.channel.send({
+          content: `${message.author}`,
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x5865f2)
+              .setTitle('📘 Message milestone — method delivered')
+              .setDescription(
+                `**Reward:** ${chosen.name}\n` +
+                  `**Messages:** ${msgs.toLocaleString()} (need ${chosen.messages.toLocaleString()})\n\n` +
+                  `Method text is **unlimited**.`
+              )
+              .setFooter({ text: 'Ultimate Rewards • Message claim' })
+          ]
+        }).catch(() => {});
+        let rem = String(body);
+        while (rem.length) {
+          await message.channel.send(rem.slice(0, 1900)).catch(() => {});
+          rem = rem.slice(1900);
+        }
+      } else {
+        const staffPing = STAFF_TEAM_ROLE_ID
+          ? `<@&${STAFF_TEAM_ROLE_ID}>`
+          : OWNER_ROLE_ID
+            ? `<@&${OWNER_ROLE_ID}>`
+            : '@staff';
+        await message.channel.send(
+          `${staffPing}\n${message.author} requests **message reward**: **${chosen.name}** ` +
+            `(need ${chosen.messages.toLocaleString()} · has ${msgs.toLocaleString()}).\n` +
+            `Method text not set — staff: \`$method set ${chosen.name} | text\``
+        );
+      }
+      try {
+        const pingPayload = await pingOnlineRewardStaff(message.guild, message.author, chosen.name);
+        if (pingPayload) await message.channel.send(pingPayload).catch(() => {});
+      } catch (_) {}
     });
     return;
   }
 
 
+  // ========== $inv — Falcon invite
   // ========== $inv — Falcon invites ==========
   if (cmd === 'inv' || cmd === 'invites' || cmd === 'falcon') {
     const user =

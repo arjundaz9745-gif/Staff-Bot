@@ -15,31 +15,43 @@
     <p id="gateErr" class="muted" style="margin-top:12px;color:#f87171"></p>
   </div>
 
-  <div id="app" class="wrap hidden">
-    <div class="topbar">
-      <img class="logo" src="/logo.png" alt="" />
-      <div>
-        <h1>Ultimate Rewards</h1>
-        <p class="sub" id="meLine">—</p>
+  <div id="app" class="hidden">
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <img src="/logo.png" alt="" />
+        <div>
+          <h1>Ultimate Rewards</h1>
+          <p class="sub" id="meLine">—</p>
+        </div>
       </div>
-      <button type="button" class="hamburger" id="menuBtn" aria-label="Menu">
-        <span></span><span></span><span></span>
-      </button>
-    </div>
+      <nav id="nav">
+        <button type="button" data-tab="overview" class="active">Overview</button>
+        <button type="button" data-tab="commands">Commands</button>
+        <button type="button" data-tab="tickets">Tickets</button>
+        <button type="button" data-tab="staffchat">Staff Chat</button>
+        <button type="button" data-tab="staffcmd">Staff Cmd</button>
+        <button type="button" data-tab="stock">Stock</button>
+        <button type="button" data-tab="methods">Methods</button>
+        <button type="button" data-tab="settings">Settings</button>
+        <button type="button" data-tab="backup">Export</button>
+      </nav>
+      <div class="side-foot">Staff dashboard · Discord login</div>
+    </aside>
 
-    <nav class="nav" id="nav">
-      <button type="button" data-tab="overview" class="active">Overview</button>
-      <button type="button" data-tab="tickets">Tickets</button>
-      <button type="button" data-tab="staffchat">Staff Chat</button>
-      <button type="button" data-tab="staffcmd">Staff Cmd</button>
-      <button type="button" data-tab="stock">Stock</button>
-      <button type="button" data-tab="methods">Methods</button>
-      <button type="button" data-tab="settings">Settings</button>
-      <button type="button" data-tab="backup">Export</button>
-    </nav>
+    <div class="main">
+      <div class="topbar-mobile">
+        <img class="logo" src="/logo.png" alt="" />
+        <div>
+          <strong>Ultimate Rewards</strong>
+          <div class="muted" style="font-size:0.75rem">Menu</div>
+        </div>
+        <button type="button" class="hamburger" id="menuBtn" aria-label="Menu">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
 
-    <!-- OVERVIEW -->
-    <section id="tab-overview" class="card">
+<section id="tab-overview" class="card">
       <h2>Overview</h2>
       <p class="muted">Server status · protection · quick links</p>
       <hr class="sep" />
@@ -48,6 +60,59 @@
       <h3>Quick toggles</h3>
       <div id="quickToggles"></div>
     </section>
+
+    <section id="tab-commands" class="card hidden">
+      <h2>Commands guide</h2>
+      <p class="muted">Every bot command, who can use it, and what it does.</p>
+      <hr class="sep" />
+      <div class="scroll-box" id="commandsGuide">
+
+        <h3>🎁 Claims & rewards</h3>
+        <div class="cmd-block"><code>$claim</code> — In a <b>ticket</b>: shows invite rewards you unlocked. Reply with a number to claim.<div class="who">Everyone (tickets only)</div></div>
+        <div class="cmd-block"><code>$mclaim</code> — In a <b>ticket</b>: message-milestone rewards. Reply with a number.<div class="who">Everyone (tickets only)</div></div>
+        <div class="cmd-block"><code>$method list</code> / <code>set Name | text</code> / <code>get</code> / <code>del</code> — Unlimited method text library for auto-delivery.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$inv</code> / <code>$invites</code> — Show tracked invites (Falcon sync).<div class="who">Everyone</div></div>
+
+        <h3>📦 Stock & pay</h3>
+        <div class="cmd-block"><code>$mcfa</code> / <code>$stock</code> — Stock count, list, add, clear.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$pay @user</code> — DM 1 MCFA from stock.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$salary @user</code> — Staff salary DM (restricted roles).<div class="who">Owner / Co-Owner role</div></div>
+        <div class="cmd-block"><code>$custom</code> / <code>$custompay @user|@role</code> — Custom stock + deliver.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$clear</code> — Clear MCFA stock.<div class="who">Staff</div></div>
+
+        <h3>🪙 Ultimate economy</h3>
+        <div class="cmd-block"><code>$ultimate</code> — Your coins.<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$ultimate @user</code> — Their balance.<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$ultimate give @user amount</code> — Send coins.<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$ultimate daily</code> — Daily claim (24h).<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$ultimate cf amount head|tail</code> — Coin flip.<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$ultimate top</code> — Richest users.<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$ultimate add amount [@user]</code> — Add coins.<div class="who">Owner / Co-Owner</div></div>
+
+        <h3>🎮 Team</h3>
+        <div class="cmd-block"><code>$team minecraft|pubg|bgmi|freefire|amongus …</code> — LFG post.<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$teamup @users</code> — Private TeamUp channel (live panel).<div class="who">Everyone</div></div>
+        <div class="cmd-block"><code>$close</code> / <code>$leave</code> — Inside TeamUp only.<div class="who">Creator/staff · members</div></div>
+
+        <h3>🛡️ Staff tools</h3>
+        <div class="cmd-block"><code>$staffstats</code> — Staff hierarchy + bots + online counts.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$online @role</code> — Online members in a role.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$best @role</code> — Messages + invites leaderboard.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$count #channel</code> — Enable sequential counting game.<div class="who">Staff</div></div>
+        <div class="cmd-block"><code>$help</code> — Command list in Discord.<div class="who">Everyone</div></div>
+
+        <h3>⚙️ Auto features</h3>
+        <div class="cmd-block">Ticket created → reward menu if eligible (invites).<div class="who">Automatic</div></div>
+        <div class="cmd-block">Word <b>legit</b> → bot reacts ✅<div class="who">Automatic</div></div>
+        <div class="cmd-block">Mass-ping same user 3× → 3-day timeout (Owner role exempt).<div class="who">Automatic</div></div>
+        <div class="cmd-block">Raid-like channel rename → revert + timeout.<div class="who">Automatic</div></div>
+
+        <h3>🌐 Dashboard</h3>
+        <div class="cmd-block"><b>Methods</b> tab — save unlimited method texts for claims.<div class="who">Staff login</div></div>
+        <div class="cmd-block"><b>Stock / Settings / Export</b> — manage stock, toggles, backup.<div class="who">Staff login</div></div>
+      </div>
+    </section>
+
 
     <!-- TICKETS -->
     <section id="tab-tickets" class="card hidden">
@@ -154,7 +219,7 @@
       <hr class="sep" />
       <h3>UI</h3>
       <label class="muted">Background blur (px)</label>
-      <input id="blur" type="number" min="0" max="12" step="0.5" value="2" />
+      <input id="blur" type="number" min="0" max="12" step="0.5" value="0.5" />
       <button type="button" class="btn ghost" id="btnBlur">Apply blur</button>
       <a class="btn ghost" href="/auth/logout">Logout</a>
     </section>
@@ -170,11 +235,13 @@
       <p id="backupMsg" class="muted"></p>
     </section>
 
-    <div class="footer">
+    <div class="footer muted" style="text-align:center;margin-top:20px;font-size:0.8rem">
       「🜲 • ᴅᴀsʜᴡʜᴏ」 · Ultimate Rewards staff panel<br />
       Not affiliated with Mojang, Minecraft, Microsoft, or Discord.
     </div>
-  </div>
-  <script src="/app.js"></script>
+    </div><!-- /.main -->
+  </div><!-- /#app -->
+
+<script src="/app.js"></script>
 </body>
 </html>

@@ -20,13 +20,22 @@ async function api(path, opts = {}) {
   return j;
 }
 
+function closeSidebar() {
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebarBackdrop')?.classList.remove('open');
+}
+function openSidebar() {
+  document.getElementById('sidebar')?.classList.add('open');
+  document.getElementById('sidebarBackdrop')?.classList.add('open');
+}
+
 function tab(name) {
   document.querySelectorAll('[id^=tab-]').forEach((e) => e.classList.add('hidden'));
   document.getElementById('tab-' + name)?.classList.remove('hidden');
   document.querySelectorAll('#nav button').forEach((b) =>
     b.classList.toggle('active', b.dataset.tab === name)
   );
-  document.getElementById('nav').classList.remove('open');
+  closeSidebar();
   if (name === 'tickets') loadTickets();
   if (name === 'staffchat') loadChannel(STAFF_CHAT, 'staffChatBox');
   if (name === 'staffcmd') loadChannel(STAFF_CMD, 'staffCmdBox');
@@ -258,6 +267,10 @@ async function loadToggles() {
 }
 
 async function boot() {
+  document.documentElement.style.setProperty('--blur', '0.5px');
+  const blurInput = document.getElementById('blur');
+  if (blurInput) blurInput.value = '0.5';
+
   const s = await api('/api/status');
   if (!s.authed) {
     document.getElementById('gateErr').textContent = s.error || s.hint || '';
@@ -318,7 +331,7 @@ document.getElementById('btnSaveSettings').onclick = async () => {
   }
 };
 document.getElementById('btnBlur').onclick = () => {
-  document.documentElement.style.setProperty('--blur', (document.getElementById('blur').value || 2) + 'px');
+  document.documentElement.style.setProperty('--blur', (document.getElementById('blur').value || 0.5) + 'px');
 };
 document.getElementById('btnExport').onclick = async () => {
   const r = await fetch('/api/export', { credentials: 'same-origin' });
@@ -373,6 +386,14 @@ document.getElementById('btnMethodDelete')?.addEventListener('click', async () =
     msg.textContent = e.message;
   }
 });
+
+
+document.getElementById('menuBtn')?.addEventListener('click', () => {
+  const sb = document.getElementById('sidebar');
+  if (sb?.classList.contains('open')) closeSidebar();
+  else openSidebar();
+});
+document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSidebar);
 
 boot().catch((e) => {
   document.getElementById('gateErr').textContent = e.message || '';

@@ -31,6 +31,7 @@ function tab(name) {
   if (name === 'staffchat') loadChannel(STAFF_CHAT, 'staffChatBox');
   if (name === 'staffcmd') loadChannel(STAFF_CMD, 'staffCmdBox');
   if (name === 'stock') loadStock();
+  if (name === 'methods') loadMethods();
   if (name === 'settings') loadToggles();
 }
 
@@ -159,6 +160,63 @@ async function loadStock() {
   }
 }
 
+async function loadMethods() {
+  try {
+    const j = await api('/api/methods');
+    const tiers = document.getElementById('rewardTiersOut');
+    const inv = (j.inviteRewards || []).map((r) =>
+      `<div class="toggle"><span class="label">${r.invites} inv · ${r.type}</span><b>${r.name}</b></div>`
+    ).join('');
+    const msg = (j.messageRewards || []).map((r) =>
+      `<div class="toggle"><span class="label">${r.messages} msgs</span><b>${r.name}</b></div>`
+    ).join('');
+    tiers.innerHTML =
+      '<p class="muted" style="margin:0 0 6px">Invite rewards</p>' + (inv || '<p class="muted">—</p>') +
+      '<p class="muted" style="margin:12px 0 6px">Message milestones</p>' + (msg || '<p class="muted">—</p>');
+
+    const dl = document.getElementById('methodCatalog');
+    if (dl) {
+      const names = new Set([
+        ...(j.catalog || []),
+        ...(j.inviteRewards || []).filter((r) => r.type === 'method').map((r) => r.name),
+        ...(j.messageRewards || []).map((r) => r.name),
+        ...(j.methods || []).map((m) => m.name)
+      ]);
+      dl.innerHTML = [...names].map((n) => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
+    }
+
+    const el = document.getElementById('methodsOut');
+    if (!(j.methods || []).length) {
+      el.innerHTML = '<p class="muted">No method texts saved yet. Add one below.</p>';
+    } else {
+      el.innerHTML = j.methods.map((m) =>
+        `<div class="toggle" style="flex-direction:column;align-items:flex-start;gap:4px">
+          <div style="display:flex;justify-content:space-between;width:100%;gap:8px">
+            <span class="label"><b>${m.name}</b></span>
+            <span class="muted">${m.length} chars</span>
+          </div>
+          <span class="muted" style="font-size:12px">${(m.preview || '').replace(/</g,'&lt;')}…</span>
+          <button type="button" class="btn ghost" data-method-load="${m.name.replace(/"/g, '&quot;')}">Edit</button>
+        </div>`
+      ).join('');
+      el.querySelectorAll('[data-method-load]').forEach((btn) => {
+        btn.onclick = async () => {
+          const name = btn.getAttribute('data-method-load');
+          document.getElementById('methodName').value = name;
+          // fetch full text via list is preview only — re-get by saving name; use GET list has no full body
+          // POST get not available — store preview; user can paste. Better: include body in GET for staff.
+          const full = j.methods.find((x) => x.name === name);
+          document.getElementById('methodBody').value = full?.body || full?.preview || '';
+          document.getElementById('methodMsg').textContent = 'Loaded — edit and Save to update';
+        };
+      });
+    }
+  } catch (e) {
+    document.getElementById('methodsOut').textContent = e.message;
+  }
+}
+
+
 async function loadToggles() {
   try {
     const j = await api('/api/toggles');
@@ -281,6 +339,40 @@ document.getElementById('btnImport').onclick = async () => {
     document.getElementById('backupMsg').textContent = e.message;
   }
 };
+
+
+document.getElementById('btnMethods')?.addEventListener('click', () => loadMethods());
+document.getElementById('btnMethodSave')?.addEventListener('click', async () => {
+  const name = document.getElementById('methodName').value.trim();
+  const content = document.getElementById('methodBody').value.trim();
+  const msg = document.getElementById('methodMsg');
+  try {
+    await api('/api/methods', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'set', name, content })
+    });
+    msg.textContent = 'Saved ✓ (unlimited — never depletes)';
+    loadMethods();
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+});
+document.getElementById('btnMethodDelete')?.addEventListener('click', async () => {
+  const name = document.getElementById('methodName').value.trim();
+  const msg = document.getElementById('methodMsg');
+  if (!name || !confirm('Delete method text for ' + name + '?')) return;
+  try {
+    await api('/api/methods', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'delete', name })
+    });
+    msg.textContent = 'Deleted';
+    document.getElementById('methodBody').value = '';
+    loadMethods();
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+});
 
 boot().catch((e) => {
   document.getElementById('gateErr').textContent = e.message || '';

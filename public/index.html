@@ -33,6 +33,7 @@
       <button type="button" data-tab="staffchat">Staff Chat</button>
       <button type="button" data-tab="staffcmd">Staff Cmd</button>
       <button type="button" data-tab="stock">Stock</button>
+      <button type="button" data-tab="methods">Methods</button>
       <button type="button" data-tab="settings">Settings</button>
       <button type="button" data-tab="backup">Export</button>
     </nav>
@@ -102,6 +103,30 @@
       <hr class="sep" />
       <div id="stockOut"></div>
       <button type="button" class="btn ghost" id="btnStock">Refresh</button>
+    </section>
+
+    <section id="tab-methods" class="card hidden">
+      <h2>Methods & Rewards</h2>
+      <p class="muted">Unlimited method texts for invite / message claims. Never runs out of stock.</p>
+      <hr class="sep" />
+      <h3>Invite & message tiers</h3>
+      <div id="rewardTiersOut" class="muted">Loading…</div>
+      <hr class="sep" />
+      <h3>Saved method texts</h3>
+      <div id="methodsOut"></div>
+      <button type="button" class="btn ghost" id="btnMethods">Refresh</button>
+      <hr class="sep" />
+      <h3>Add / update method</h3>
+      <label class="muted">Exact reward name (must match claim list)</label>
+      <input id="methodName" placeholder="MC Redeem Code Method" list="methodCatalog" />
+      <datalist id="methodCatalog"></datalist>
+      <label class="muted">Method body (full text)</label>
+      <textarea id="methodBody" rows="8" placeholder="Paste the full method guide here…" style="width:100%;min-height:140px;border-radius:12px;padding:12px;background:rgba(0,0,0,.35);color:#fff;border:1px solid rgba(255,255,255,.12)"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button type="button" class="btn" id="btnMethodSave">Save method</button>
+        <button type="button" class="btn ghost" id="btnMethodDelete">Delete</button>
+      </div>
+      <p id="methodMsg" class="muted"></p>
     </section>
 
     <!-- SETTINGS -->

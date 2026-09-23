@@ -395,6 +395,12 @@ document.getElementById('menuBtn')?.addEventListener('click', () => {
 });
 document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSidebar);
 
+
+document.getElementById('featureHub')?.addEventListener('click', (e) => {
+  const card = e.target.closest('[data-goto]');
+  if (card) tab(card.getAttribute('data-goto'));
+});
+
 boot().catch((e) => {
   document.getElementById('gateErr').textContent = e.message || '';
 });

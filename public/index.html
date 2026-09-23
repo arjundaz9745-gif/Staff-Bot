@@ -26,15 +26,19 @@
         </div>
       </div>
       <nav id="nav">
-        <button type="button" data-tab="overview" class="active">Overview</button>
-        <button type="button" data-tab="commands">Commands</button>
-        <button type="button" data-tab="tickets">Tickets</button>
-        <button type="button" data-tab="staffchat">Staff Chat</button>
-        <button type="button" data-tab="staffcmd">Staff Cmd</button>
-        <button type="button" data-tab="stock">Stock</button>
-        <button type="button" data-tab="methods">Methods</button>
-        <button type="button" data-tab="settings">Settings</button>
-        <button type="button" data-tab="backup">Export</button>
+        <div class="nav-label">Main</div>
+        <button type="button" data-tab="overview" class="active"><span class="ico">◈</span> Overview</button>
+        <button type="button" data-tab="commands"><span class="ico">⌘</span> Commands</button>
+        <div class="nav-label">Live</div>
+        <button type="button" data-tab="tickets"><span class="ico">🎫</span> Tickets</button>
+        <button type="button" data-tab="staffchat"><span class="ico">💬</span> Staff Chat</button>
+        <button type="button" data-tab="staffcmd"><span class="ico">⚡</span> Staff Cmd</button>
+        <div class="nav-label">Inventory</div>
+        <button type="button" data-tab="stock"><span class="ico">📦</span> Stock</button>
+        <button type="button" data-tab="methods"><span class="ico">📘</span> Methods</button>
+        <div class="nav-label">System</div>
+        <button type="button" data-tab="settings"><span class="ico">⚙</span> Settings</button>
+        <button type="button" data-tab="backup"><span class="ico">💾</span> Export</button>
       </nav>
       <div class="side-foot">Staff dashboard · Discord login</div>
     </aside>
@@ -53,9 +57,23 @@
 
 <section id="tab-overview" class="card">
       <h2>Overview</h2>
-      <p class="muted">Server status · protection · quick links</p>
+      <p class="muted">Live bot status · modules · jump to any feature</p>
       <hr class="sep" />
       <div class="stat-grid" id="stats"></div>
+      <hr class="sep" />
+      <h3>Feature hub</h3>
+      <div class="feature-grid" id="featureHub">
+        <div class="feature-card" data-goto="commands"><div class="fi">⌘</div><div class="ft">Commands</div><div class="fd">Full list of every $ command & who can use it</div></div>
+        <div class="feature-card" data-goto="tickets"><div class="fi">🎫</div><div class="ft">Tickets</div><div class="fd">Open tickets, reply as bot, claim flow</div></div>
+        <div class="feature-card" data-goto="methods"><div class="fi">📘</div><div class="ft">Methods</div><div class="fd">Unlimited method texts for invite & message rewards</div></div>
+        <div class="feature-card" data-goto="stock"><div class="fi">📦</div><div class="ft">Stock</div><div class="fd">MCFA, Netflix, Xbox, custom pay stock counts</div></div>
+        <div class="feature-card" data-goto="staffchat"><div class="fi">💬</div><div class="ft">Staff Chat</div><div class="fd">Live staff channel feed</div></div>
+        <div class="feature-card" data-goto="settings"><div class="fi">🛡</div><div class="ft">Protection</div><div class="fd">Anti-raid, mass-ping, automod toggles</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">🪙</div><div class="ft">Economy</div><div class="fd">$ultimate coins, daily, cf, give, top</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">🎮</div><div class="ft">TeamUp / LFG</div><div class="fd">$team posts & private $teamup channels</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">🎁</div><div class="ft">Invite claims</div><div class="fd">$claim tiers + auto staff ping</div></div>
+        <div class="feature-card" data-goto="backup"><div class="fi">💾</div><div class="ft">Backup</div><div class="fd">Export / import full JSON data</div></div>
+      </div>
       <hr class="sep" />
       <h3>Quick toggles</h3>
       <div id="quickToggles"></div>

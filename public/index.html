@@ -27,18 +27,18 @@
       </div>
       <nav id="nav">
         <div class="nav-label">Main</div>
-        <button type="button" data-tab="overview" class="active"><span class="ico">◈</span> Overview</button>
-        <button type="button" data-tab="commands"><span class="ico">⌘</span> Commands</button>
+        <button type="button" data-tab="overview" class="active">Overview</button>
+        <button type="button" data-tab="commands">Commands</button>
         <div class="nav-label">Live</div>
-        <button type="button" data-tab="tickets"><span class="ico">🎫</span> Tickets</button>
-        <button type="button" data-tab="staffchat"><span class="ico">💬</span> Staff Chat</button>
-        <button type="button" data-tab="staffcmd"><span class="ico">⚡</span> Staff Cmd</button>
+        <button type="button" data-tab="tickets">Tickets</button>
+        <button type="button" data-tab="staffchat">Staff Chat</button>
+        <button type="button" data-tab="staffcmd">Staff Cmd</button>
         <div class="nav-label">Inventory</div>
-        <button type="button" data-tab="stock"><span class="ico">📦</span> Stock</button>
-        <button type="button" data-tab="methods"><span class="ico">📘</span> Methods</button>
+        <button type="button" data-tab="stock">Stock</button>
+        <button type="button" data-tab="methods">Methods</button>
         <div class="nav-label">System</div>
-        <button type="button" data-tab="settings"><span class="ico">⚙</span> Settings</button>
-        <button type="button" data-tab="backup"><span class="ico">💾</span> Export</button>
+        <button type="button" data-tab="settings">Settings</button>
+        <button type="button" data-tab="backup">Export</button>
       </nav>
       <div class="side-foot">Staff dashboard · Discord login</div>
     </aside>
@@ -63,16 +63,16 @@
       <hr class="sep" />
       <h3>Feature hub</h3>
       <div class="feature-grid" id="featureHub">
-        <div class="feature-card" data-goto="commands"><div class="fi">⌘</div><div class="ft">Commands</div><div class="fd">Full list of every $ command & who can use it</div></div>
-        <div class="feature-card" data-goto="tickets"><div class="fi">🎫</div><div class="ft">Tickets</div><div class="fd">Open tickets, reply as bot, claim flow</div></div>
-        <div class="feature-card" data-goto="methods"><div class="fi">📘</div><div class="ft">Methods</div><div class="fd">Unlimited method texts for invite & message rewards</div></div>
-        <div class="feature-card" data-goto="stock"><div class="fi">📦</div><div class="ft">Stock</div><div class="fd">MCFA, Netflix, Xbox, custom pay stock counts</div></div>
-        <div class="feature-card" data-goto="staffchat"><div class="fi">💬</div><div class="ft">Staff Chat</div><div class="fd">Live staff channel feed</div></div>
-        <div class="feature-card" data-goto="settings"><div class="fi">🛡</div><div class="ft">Protection</div><div class="fd">Anti-raid, mass-ping, automod toggles</div></div>
-        <div class="feature-card" data-goto="commands"><div class="fi">🪙</div><div class="ft">Economy</div><div class="fd">$ultimate coins, daily, cf, give, top</div></div>
-        <div class="feature-card" data-goto="commands"><div class="fi">🎮</div><div class="ft">TeamUp / LFG</div><div class="fd">$team posts & private $teamup channels</div></div>
-        <div class="feature-card" data-goto="commands"><div class="fi">🎁</div><div class="ft">Invite claims</div><div class="fd">$claim tiers + auto staff ping</div></div>
-        <div class="feature-card" data-goto="backup"><div class="fi">💾</div><div class="ft">Backup</div><div class="fd">Export / import full JSON data</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">Commands</div><div class="fd">Full list of every $ command & who can use it</div></div>
+        <div class="feature-card" data-goto="tickets"><div class="fi">•</div><div class="ft">Tickets</div><div class="fd">Open tickets, reply as bot, claim flow</div></div>
+        <div class="feature-card" data-goto="methods"><div class="fi">•</div><div class="ft">Methods</div><div class="fd">Unlimited method texts for invite & message rewards</div></div>
+        <div class="feature-card" data-goto="stock"><div class="fi">•</div><div class="ft">Stock</div><div class="fd">MCFA, Netflix, Xbox, custom pay stock counts</div></div>
+        <div class="feature-card" data-goto="staffchat"><div class="fi">•</div><div class="ft">Staff Chat</div><div class="fd">Live staff channel feed</div></div>
+        <div class="feature-card" data-goto="settings"><div class="fi">•</div><div class="ft">Protection</div><div class="fd">Anti-raid, mass-ping, automod toggles</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">Economy</div><div class="fd">$ultimate coins, daily, cf, give, top</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">TeamUp / LFG</div><div class="fd">$team posts & private $teamup channels</div></div>
+        <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">Invite claims</div><div class="fd">$claim tiers + auto staff ping</div></div>
+        <div class="feature-card" data-goto="backup"><div class="fi">•</div><div class="ft">Backup</div><div class="fd">Export / import full JSON data</div></div>
       </div>
       <hr class="sep" />
       <h3>Quick toggles</h3>
@@ -182,37 +182,43 @@
     <!-- STOCK -->
     <section id="tab-stock" class="card hidden">
       <h2>Stock</h2>
-      <p class="muted">Pay stock counts</p>
+      <p class="muted">Tap a product card to add lines. Counts update live.</p>
       <hr class="sep" />
-      <div id="stockOut"></div>
-      <button type="button" class="btn ghost" id="btnStock">Refresh</button>
+      <div class="product-grid" id="stockCards"></div>
+      <div class="editor-panel hidden" id="stockEditor">
+        <h4 id="stockEditorTitle">Add stock</h4>
+        <p class="muted">One account / code per line</p>
+        <textarea id="stockLines" rows="8" placeholder="email:pass&#10;email:pass"></textarea>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn" id="btnStockAdd">Add to stock</button>
+          <button type="button" class="btn ghost" id="btnStockCancel">Close</button>
+        </div>
+        <p id="stockMsg" class="muted"></p>
+      </div>
+      <button type="button" class="btn ghost" id="btnStock" style="margin-top:10px">Refresh counts</button>
     </section>
 
     <section id="tab-methods" class="card hidden">
-      <h2>Methods & Rewards</h2>
-      <p class="muted">Unlimited method texts for invite / message claims. Never runs out of stock.</p>
+      <h2>Methods</h2>
+      <p class="muted">Tap a card to edit. Method text is <b>unlimited</b> — claims never run out.</p>
       <hr class="sep" />
-      <h3>Invite & message tiers</h3>
-      <div id="rewardTiersOut" class="muted">Loading…</div>
-      <hr class="sep" />
-      <h3>Saved method texts</h3>
-      <div id="methodsOut"></div>
-      <button type="button" class="btn ghost" id="btnMethods">Refresh</button>
-      <hr class="sep" />
-      <h3>Add / update method</h3>
-      <label class="muted">Exact reward name (must match claim list)</label>
-      <input id="methodName" placeholder="MC Redeem Code Method" list="methodCatalog" />
-      <datalist id="methodCatalog"></datalist>
-      <label class="muted">Method body (full text)</label>
-      <textarea id="methodBody" rows="8" placeholder="Paste the full method guide here…" style="width:100%;min-height:140px;border-radius:12px;padding:12px;background:rgba(0,0,0,.35);color:#fff;border:1px solid rgba(255,255,255,.12)"></textarea>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        <button type="button" class="btn" id="btnMethodSave">Save method</button>
-        <button type="button" class="btn ghost" id="btnMethodDelete">Delete</button>
+      <div class="product-grid" id="methodCards"></div>
+      <div class="editor-panel hidden" id="methodEditor">
+        <h4 id="methodEditorTitle">Edit method</h4>
+        <p class="muted" id="methodEditorHint">Paste the full guide users receive in tickets.</p>
+        <textarea id="methodBody" rows="10" placeholder="Full method text…"></textarea>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn" id="btnMethodSave">Save</button>
+          <button type="button" class="btn ghost" id="btnMethodDelete">Delete text</button>
+          <button type="button" class="btn ghost" id="btnMethodCancel">Close</button>
+        </div>
+        <p id="methodMsg" class="muted"></p>
       </div>
-      <p id="methodMsg" class="muted"></p>
+      <hr class="sep" />
+      <h3>Reward tiers (read-only)</h3>
+      <div id="rewardTiersOut" class="muted">Loading…</div>
     </section>
 
-    <!-- SETTINGS -->
     <section id="tab-settings" class="card hidden">
       <h2>Settings</h2>
       <p class="muted">Enable / disable modules · protection · AI</p>

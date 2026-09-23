@@ -41,7 +41,7 @@ body::before {
   background: #0a0a12 url('/bg-desktop.jpg') center / cover no-repeat;
   filter: blur(var(--blur));
   transform: scale(1.03);
-  opacity: 0.65;
+  opacity: 0.85;
 }
 body::after {
   content: "";
@@ -51,7 +51,7 @@ body::after {
   background:
     radial-gradient(ellipse 80% 50% at 20% -10%, rgba(251, 191, 36, 0.12), transparent 50%),
     radial-gradient(ellipse 60% 40% at 100% 50%, rgba(96, 165, 250, 0.08), transparent 45%),
-    linear-gradient(180deg, rgba(5,5,8,0.4) 0%, rgba(5,5,8,0.85) 70%, rgba(5,5,8,0.95) 100%);
+    linear-gradient(180deg, rgba(5,5,8,0.25) 0%, rgba(5,5,8,0.55) 50%, rgba(5,5,8,0.82) 100%);
   pointer-events: none;
 }
 @media (max-width: 900px) {
@@ -308,7 +308,7 @@ body::after {
   background: rgba(251, 191, 36, 0.08);
   transform: translateY(-2px);
 }
-.feature-card .fi {
+.feature-card .fi { font-size: 0; height: 0; overflow: hidden; } .feature-card .fi-x {
   font-size: 1.4rem;
   margin-bottom: 6px;
 }
@@ -494,3 +494,131 @@ label.muted { display: block; margin-top: 4px; font-size: 0.8rem; }
 }
 .badge.green { background: rgba(52, 211, 153, 0.15); color: var(--green); }
 .badge.blue { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+
+
+/* Product cards — Methods & Stock */
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+.product-card {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: 120px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 12px;
+  background-size: cover;
+  background-position: center;
+}
+.product-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 20%, rgba(0,0,0,0.85) 100%);
+  z-index: 0;
+}
+.product-card > * { position: relative; z-index: 1; }
+.product-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(251, 191, 36, 0.45);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+}
+.product-card.selected {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.4), 0 8px 28px rgba(0,0,0,0.4);
+}
+.product-card .pc-name {
+  font-weight: 800;
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+.product-card .pc-meta {
+  font-size: 0.72rem;
+  color: #d4d4d8;
+  margin-top: 4px;
+  font-weight: 600;
+}
+.product-card .pc-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+/* Themed backgrounds (CSS only — no external brand assets required) */
+.theme-mcfa {
+  background:
+    linear-gradient(135deg, rgba(34,197,94,0.35), rgba(22,101,52,0.5)),
+    repeating-linear-gradient(45deg, #3d8c40 0 8px, #2f6b32 8px 16px);
+}
+.theme-minecraft {
+  background:
+    linear-gradient(160deg, rgba(90, 180, 90, 0.5), rgba(20, 40, 20, 0.7)),
+    repeating-conic-gradient(#5a8f3c 0% 25%, #3e6b2e 0% 50%) 0 0 / 16px 16px;
+}
+.theme-roblox {
+  background: linear-gradient(145deg, #e2231a 0%, #8b0000 55%, #1a1a1a 100%);
+}
+.theme-nitro {
+  background: linear-gradient(145deg, #5865f2 0%, #3c45a5 50%, #1e1f2e 100%);
+}
+.theme-netflix {
+  background: linear-gradient(145deg, #e50914 0%, #6b0000 60%, #141414 100%);
+}
+.theme-crunchy {
+  background: linear-gradient(145deg, #f47521 0%, #b84d0a 50%, #1a1a1a 100%);
+}
+.theme-xbox {
+  background: linear-gradient(145deg, #107c10 0%, #0b3d0b 55%, #111 100%);
+}
+.theme-amazon {
+  background: linear-gradient(145deg, #ff9900 0%, #232f3e 55%, #131a22 100%);
+}
+.theme-stream {
+  background: linear-gradient(145deg, #9146ff 0%, #4a1a8a 50%, #1a1a2e 100%);
+}
+.theme-hotmail {
+  background: linear-gradient(145deg, #0078d4 0%, #004578 55%, #0a1628 100%);
+}
+.theme-boost {
+  background: linear-gradient(145deg, #eb459e 0%, #5865f2 50%, #1a1a2e 100%);
+}
+.theme-hosting {
+  background: linear-gradient(145deg, #06b6d4 0%, #0e7490 50%, #0f172a 100%);
+}
+.theme-default {
+  background: linear-gradient(145deg, #3f3f46 0%, #18181b 100%);
+}
+.theme-hypixel {
+  background: linear-gradient(145deg, #f59e0b 0%, #b45309 40%, #1c1917 100%);
+}
+.theme-custom {
+  background: linear-gradient(145deg, #a78bfa 0%, #5b21b6 50%, #1e1b4b 100%);
+}
+
+.editor-panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  background: rgba(0,0,0,0.35);
+  margin-top: 8px;
+}
+.editor-panel h4 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 700;
+}

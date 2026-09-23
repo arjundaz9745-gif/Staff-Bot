@@ -4,6 +4,29 @@ const STAFF_CMD = '1547183226827702312';
 let activeTicket = null;
 let togglesCache = null;
 
+function productTheme(name) {
+  const n = String(name || '').toLowerCase();
+  if (n.includes('robux') || n.includes('roblox')) return 'theme-roblox';
+  if (n.includes('hypixel')) return 'theme-hypixel';
+  if (n.includes('minecraft') || n.includes('mc redeem') || n === 'mcfa' || n.includes('mcfa')) return 'theme-minecraft';
+  if (n.includes('nitro')) return 'theme-nitro';
+  if (n.includes('netflix')) return 'theme-netflix';
+  if (n.includes('crunchy')) return 'theme-crunchy';
+  if (n.includes('xbox')) return 'theme-xbox';
+  if (n.includes('amazon') || n.includes('prime')) return 'theme-amazon';
+  if (n.includes('stream') || n.includes('twitch')) return 'theme-stream';
+  if (n.includes('hotmail') || n.includes('outlook')) return 'theme-hotmail';
+  if (n.includes('boost')) return 'theme-boost';
+  if (n.includes('hosting') || n.includes('website')) return 'theme-hosting';
+  if (n.includes('custom')) return 'theme-custom';
+  return 'theme-default';
+}
+
+let selectedMethodName = null;
+let selectedStockProduct = null;
+
+
+
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     credentials: 'same-origin',
@@ -157,15 +180,39 @@ async function loadTickets() {
 async function loadStock() {
   try {
     const j = await api('/api/stock');
-    const el = document.getElementById('stockOut');
-    el.innerHTML = Object.entries(j.stocks || j || {})
-      .map(([k, v]) => {
-        const n = typeof v === 'object' ? v.count ?? v.length ?? JSON.stringify(v) : v;
-        return `<div class="toggle"><span class="label">${k}</span><b>${n}</b></div>`;
-      })
-      .join('') || '<p class="muted">Empty</p>';
+    const stocks = j.stocks || j || {};
+    const grid = document.getElementById('stockCards');
+    if (!grid) return;
+    const entries = Object.entries(stocks);
+    if (!entries.length) {
+      grid.innerHTML = '<p class="muted">No products configured</p>';
+      return;
+    }
+    grid.innerHTML = entries.map(([k, v]) => {
+      const n = typeof v === 'object' ? (v.count ?? v.length ?? 0) : v;
+      const theme = productTheme(k);
+      const label = k.toUpperCase();
+      return `<div class="product-card ${theme}" data-stock="${k}">
+        <span class="pc-badge">${n} left</span>
+        <div class="pc-name">${label}</div>
+        <div class="pc-meta">Tap to add stock</div>
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('[data-stock]').forEach((el) => {
+      el.onclick = () => {
+        grid.querySelectorAll('.product-card').forEach((c) => c.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedStockProduct = el.getAttribute('data-stock');
+        const ed = document.getElementById('stockEditor');
+        ed.classList.remove('hidden');
+        document.getElementById('stockEditorTitle').textContent = 'Add stock · ' + selectedStockProduct.toUpperCase();
+        document.getElementById('stockLines').value = '';
+        document.getElementById('stockMsg').textContent = '';
+      };
+    });
   } catch (e) {
-    document.getElementById('stockOut').textContent = e.message;
+    const grid = document.getElementById('stockCards');
+    if (grid) grid.innerHTML = `<p class="muted">${e.message}</p>`;
   }
 }
 
@@ -173,55 +220,59 @@ async function loadMethods() {
   try {
     const j = await api('/api/methods');
     const tiers = document.getElementById('rewardTiersOut');
-    const inv = (j.inviteRewards || []).map((r) =>
-      `<div class="toggle"><span class="label">${r.invites} inv · ${r.type}</span><b>${r.name}</b></div>`
-    ).join('');
-    const msg = (j.messageRewards || []).map((r) =>
-      `<div class="toggle"><span class="label">${r.messages} msgs</span><b>${r.name}</b></div>`
-    ).join('');
-    tiers.innerHTML =
-      '<p class="muted" style="margin:0 0 6px">Invite rewards</p>' + (inv || '<p class="muted">—</p>') +
-      '<p class="muted" style="margin:12px 0 6px">Message milestones</p>' + (msg || '<p class="muted">—</p>');
-
-    const dl = document.getElementById('methodCatalog');
-    if (dl) {
-      const names = new Set([
-        ...(j.catalog || []),
-        ...(j.inviteRewards || []).filter((r) => r.type === 'method').map((r) => r.name),
-        ...(j.messageRewards || []).map((r) => r.name),
-        ...(j.methods || []).map((m) => m.name)
-      ]);
-      dl.innerHTML = [...names].map((n) => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
-    }
-
-    const el = document.getElementById('methodsOut');
-    if (!(j.methods || []).length) {
-      el.innerHTML = '<p class="muted">No method texts saved yet. Add one below.</p>';
-    } else {
-      el.innerHTML = j.methods.map((m) =>
-        `<div class="toggle" style="flex-direction:column;align-items:flex-start;gap:4px">
-          <div style="display:flex;justify-content:space-between;width:100%;gap:8px">
-            <span class="label"><b>${m.name}</b></span>
-            <span class="muted">${m.length} chars</span>
-          </div>
-          <span class="muted" style="font-size:12px">${(m.preview || '').replace(/</g,'&lt;')}…</span>
-          <button type="button" class="btn ghost" data-method-load="${m.name.replace(/"/g, '&quot;')}">Edit</button>
-        </div>`
+    if (tiers) {
+      const inv = (j.inviteRewards || []).map((r) =>
+        `<div class="toggle"><span class="label">${r.invites} inv · ${r.type}</span><b>${r.name}</b></div>`
       ).join('');
-      el.querySelectorAll('[data-method-load]').forEach((btn) => {
-        btn.onclick = async () => {
-          const name = btn.getAttribute('data-method-load');
-          document.getElementById('methodName').value = name;
-          // fetch full text via list is preview only — re-get by saving name; use GET list has no full body
-          // POST get not available — store preview; user can paste. Better: include body in GET for staff.
-          const full = j.methods.find((x) => x.name === name);
-          document.getElementById('methodBody').value = full?.body || full?.preview || '';
-          document.getElementById('methodMsg').textContent = 'Loaded — edit and Save to update';
-        };
-      });
+      const msg = (j.messageRewards || []).map((r) =>
+        `<div class="toggle"><span class="label">${r.messages} msgs</span><b>${r.name}</b></div>`
+      ).join('');
+      tiers.innerHTML =
+        '<p class="muted" style="margin:0 0 6px">Invite rewards</p>' + (inv || '<p class="muted">—</p>') +
+        '<p class="muted" style="margin:12px 0 6px">Message milestones</p>' + (msg || '<p class="muted">—</p>');
     }
+
+    const names = new Set([
+      ...(j.catalog || []),
+      ...(j.inviteRewards || []).filter((r) => r.type === 'method').map((r) => r.name),
+      ...(j.messageRewards || []).map((r) => r.name),
+      ...(j.methods || []).map((m) => m.name)
+    ]);
+    const saved = Object.fromEntries((j.methods || []).map((m) => [m.name, m]));
+
+    const grid = document.getElementById('methodCards');
+    if (!grid) return;
+    const list = [...names];
+    if (!list.length) {
+      grid.innerHTML = '<p class="muted">No method rewards in catalog</p>';
+      return;
+    }
+    grid.innerHTML = list.map((name) => {
+      const has = !!saved[name]?.body || !!saved[name]?.length;
+      const len = saved[name]?.length || 0;
+      const theme = productTheme(name);
+      return `<div class="product-card ${theme}" data-method="${name.replace(/"/g, '&quot;')}">
+        <span class="pc-badge">${has ? len + ' chars' : 'Empty'}</span>
+        <div class="pc-name">${name}</div>
+        <div class="pc-meta">${has ? 'Tap to edit' : 'Tap to add text'}</div>
+      </div>`;
+    }).join('');
+
+    grid.querySelectorAll('[data-method]').forEach((el) => {
+      el.onclick = () => {
+        grid.querySelectorAll('.product-card').forEach((c) => c.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedMethodName = el.getAttribute('data-method');
+        const full = (j.methods || []).find((x) => x.name === selectedMethodName);
+        document.getElementById('methodEditor').classList.remove('hidden');
+        document.getElementById('methodEditorTitle').textContent = selectedMethodName;
+        document.getElementById('methodBody').value = full?.body || '';
+        document.getElementById('methodMsg').textContent = full?.body ? 'Loaded — edit & save' : 'No text yet — paste method & save';
+      };
+    });
   } catch (e) {
-    document.getElementById('methodsOut').textContent = e.message;
+    const grid = document.getElementById('methodCards');
+    if (grid) grid.innerHTML = `<p class="muted">${e.message}</p>`;
   }
 }
 
@@ -356,22 +407,23 @@ document.getElementById('btnImport').onclick = async () => {
 
 document.getElementById('btnMethods')?.addEventListener('click', () => loadMethods());
 document.getElementById('btnMethodSave')?.addEventListener('click', async () => {
-  const name = document.getElementById('methodName').value.trim();
+  const name = selectedMethodName || document.getElementById('methodEditorTitle')?.textContent?.trim();
   const content = document.getElementById('methodBody').value.trim();
   const msg = document.getElementById('methodMsg');
+  if (!name) { msg.textContent = 'Select a method card first'; return; }
   try {
     await api('/api/methods', {
       method: 'POST',
       body: JSON.stringify({ action: 'set', name, content })
     });
-    msg.textContent = 'Saved ✓ (unlimited — never depletes)';
+    msg.textContent = 'Saved ✓ unlimited';
     loadMethods();
   } catch (e) {
     msg.textContent = e.message;
   }
 });
 document.getElementById('btnMethodDelete')?.addEventListener('click', async () => {
-  const name = document.getElementById('methodName').value.trim();
+  const name = selectedMethodName;
   const msg = document.getElementById('methodMsg');
   if (!name || !confirm('Delete method text for ' + name + '?')) return;
   try {
@@ -385,6 +437,29 @@ document.getElementById('btnMethodDelete')?.addEventListener('click', async () =
   } catch (e) {
     msg.textContent = e.message;
   }
+});
+document.getElementById('btnMethodCancel')?.addEventListener('click', () => {
+  document.getElementById('methodEditor')?.classList.add('hidden');
+});
+document.getElementById('btnStockAdd')?.addEventListener('click', async () => {
+  const product = selectedStockProduct;
+  const lines = document.getElementById('stockLines').value;
+  const msg = document.getElementById('stockMsg');
+  if (!product) { msg.textContent = 'Select a product card first'; return; }
+  try {
+    const j = await api('/api/stock', {
+      method: 'POST',
+      body: JSON.stringify({ product, lines })
+    });
+    msg.textContent = 'Added ' + (j.added || 0) + ' · total ' + (j.total || '?');
+    document.getElementById('stockLines').value = '';
+    loadStock();
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+});
+document.getElementById('btnStockCancel')?.addEventListener('click', () => {
+  document.getElementById('stockEditor')?.classList.add('hidden');
 });
 
 

@@ -17,6 +17,7 @@ function defaultData() {
     daily: {},
     counting: {},
     teamups: {},
+    methodTexts: {},
     hits: [],
     exportCounts: { mcfa: 0, custom: 0, hits: 0 },
     stocks: {},

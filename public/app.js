@@ -448,8 +448,9 @@ async function boot() {
   } else {
     const desktop = document.getElementById('bgDesktop');
     const mobile = document.getElementById('bgMobile');
-    if (desktop) desktop.src = 'https://kommodo.ai/i/azE2d9AUtgWeIkpbsQbm';
-    if (mobile) mobile.src = 'https://kommodo.ai/i/pK7lEZElMj1aalGIRGp9';
+    const t = Date.now();
+    if (desktop) desktop.src = 'https://kommodo.ai/i/azE2d9AUtgWeIkpbsQbm?t=' + t;
+    if (mobile) mobile.src = 'https://kommodo.ai/i/pK7lEZElMj1aalGIRGp9?t=' + t;
   }
 
   const s = await api('/api/status');

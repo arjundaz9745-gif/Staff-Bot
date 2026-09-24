@@ -23,6 +23,11 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || '';
 const PREFIX = process.env.PREFIX || '$';
 const PORT = process.env.PORT || 3000;
+const DASHBOARD_ADMIN_PASSWORD = process.env.DASHBOARD_ADMIN_PASSWORD || 'ultimate-admin';
+const LEVEL_XP_MIN = 15;
+const LEVEL_XP_MAX = 25;
+const LEVEL_COOLDOWN_MS = 60_000; // XP once per minute per user
+
 
 // Staff role hierarchy for $staffstats (highest first)
 const OWNER_ROLE_ID = process.env.OWNER_ROLE_ID || '1547183159794204675'; // Owner
@@ -119,17 +124,36 @@ function resolveProductKey(name) {
 
 function buildStockListEmbed() {
   ensureStocks(data);
-  const lines = Object.entries(PRODUCT_STOCKS).map(([key, meta]) => {
-    const n = (data.stocks[key] || []).length;
-    return `${meta.emoji} **${meta.label}**  |  \`${n}\``;
-  });
+  const count = (key) => (data.stocks[key] || []).length;
+  const line = (emoji, label, key) => `${emoji} **${label}**  |  \`${count(key)}\``;
+
+  const booster = [
+    line('⭐', 'NITRO PROMO', 'nitro'),
+    line('🎮', 'XBOX', 'xbox'),
+    line('🍥', 'CRUNCHYROLL', 'crunchyroll')
+  ].join('\n');
+
+  const general = [
+    line('🍩', 'DONUT', 'donut'),
+    line('🟩', 'MCFA', 'mcfa'),
+    line('⚔️', 'HYPIXEL', 'hypixel'),
+    line('🎬', 'NETFLIX', 'netflix'),
+    line('🎮', 'STEAM', 'steam'),
+    line('📦', 'CUSTOM', 'custom')
+  ].join('\n');
+
   return new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0x2b2d31)
     .setTitle('📦 CURRENT STOCK STATUS')
-    .setDescription(lines.join('\n'))
-    .setFooter({ text: 'USE $BUY <PRODUCT> OR $PAY / $<product> @user — Ultimate Rewards' })
+    .setDescription(
+      `**BOOSTER ACCESS**\n${booster}\n\n` +
+        `**GENERAL STOCK**\n${general}\n\n` +
+        `USE \`$buy <product>\` OR \`$pay @user\` TO DELIVER`
+    )
+    .setFooter({ text: 'Ultimate Rewards · Stock' })
     .setTimestamp();
 }
+
 
 function isStaffApplyChannel(ch) {
   if (!ch || !ch.name) return false;
@@ -365,10 +389,38 @@ http
         res.end(fs.readFileSync(img));
         return;
       }
-      if (pathName === '/bg-desktop.jpg' || pathName === '/bg-mobile.jpg') {
-        const img = path.join(__dirname, 'public', pathName.slice(1));
-        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
-        res.end(fs.readFileSync(img));
+      // Background + any public image (jpg/png/webp/gif)
+      if (
+        pathName === '/bg-desktop.jpg' ||
+        pathName === '/bg-mobile.jpg' ||
+        pathName === '/bg-desktop.png' ||
+        pathName === '/bg-mobile.png' ||
+        pathName === '/bg-desktop.webp' ||
+        pathName === '/bg-mobile.webp' ||
+        pathName === '/logo.png' ||
+        pathName === '/logo.jpg' ||
+        pathName.startsWith('/bg-')
+      ) {
+        const file = path.join(__dirname, 'public', path.basename(pathName));
+        if (!fs.existsSync(file)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not found');
+          return;
+        }
+        const ext = path.extname(file).toLowerCase();
+        const types = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.webp': 'image/webp',
+          '.gif': 'image/gif'
+        };
+        const type = types[ext] || 'application/octet-stream';
+        res.writeHead(200, {
+          'Content-Type': type,
+          'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+        });
+        res.end(fs.readFileSync(file));
         return;
       }
 
@@ -563,6 +615,77 @@ http
         data.methodTexts[name] = content;
         saveData();
         return json(200, { ok: true, name, length: content.length });
+      }
+
+
+      if (pathName === '/api/giveaways' && req.method === 'GET') {
+        const list = Object.entries(data.giveaways || {}).map(([id, g]) => ({
+          id,
+          prize: g.prize,
+          winners: g.winners,
+          entries: (g.entries || []).length,
+          ended: !!g.ended,
+          endsAt: g.endsAt,
+          channelId: g.channelId,
+          hostId: g.hostId,
+          winnerIds: g.winnerIds || []
+        }));
+        list.sort((a, b) => (b.endsAt || 0) - (a.endsAt || 0));
+        return json(200, { giveaways: list });
+      }
+
+      if (pathName === '/api/levels' && req.method === 'GET') {
+        const guildId = url.searchParams.get('guildId') || '';
+        const map = data.levels?.[guildId] || {};
+        const list = Object.entries(map)
+          .map(([userId, v]) => ({
+            userId,
+            xp: v.xp || 0,
+            level: v.level || levelFromXp(v.xp || 0)
+          }))
+          .sort((a, b) => b.xp - a.xp)
+          .slice(0, 50);
+        return json(200, { guildId, levels: list });
+      }
+
+      if (pathName === '/api/servers' && req.method === 'GET') {
+        const guilds = [];
+        for (const [, g] of client.guilds.cache) {
+          guilds.push({
+            id: g.id,
+            name: g.name,
+            memberCount: g.memberCount,
+            icon: g.iconURL({ size: 64 }),
+            configured: !!(data.serverConfigs && data.serverConfigs[g.id])
+          });
+        }
+        return json(200, { servers: guilds });
+      }
+
+      if (pathName === '/api/servers/config' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const password = String(body.password || '');
+        if (password !== DASHBOARD_ADMIN_PASSWORD) {
+          return json(403, { error: 'Invalid admin password' });
+        }
+        const guildId = String(body.guildId || '');
+        if (!guildId) return json(400, { error: 'guildId required' });
+        if (!data.serverConfigs) data.serverConfigs = {};
+        data.serverConfigs[guildId] = {
+          ...(data.serverConfigs[guildId] || {}),
+          ...(body.config || {}),
+          updatedAt: new Date().toISOString()
+        };
+        saveData();
+        return json(200, { ok: true, config: data.serverConfigs[guildId] });
+      }
+
+      if (pathName === '/api/falcon/sync' && req.method === 'GET') {
+        const guildId = url.searchParams.get('guildId') || '';
+        return json(200, {
+          invites: data.falconInvites?.[guildId] || data.falconInvites || {},
+          messages: data.falconMessages?.[guildId] || data.falconMessages || {}
+        });
       }
 
       if (pathName === '/api/hits' && req.method === 'GET') {
@@ -788,6 +911,9 @@ function loadData() {
       if (!d.falconInvites) d.falconInvites = {};
       if (!d.falconMessages) d.falconMessages = {};
       if (!d.giveaways) d.giveaways = {};
+      if (!d.levels) d.levels = {}; // guildId -> userId -> { xp, level }
+      if (!d.serverConfigs) d.serverConfigs = {}; // guildId -> settings
+
       if (!d.protection) d.protection = { antinuke: true, antibetray: true, automod: false, badWords: 'scam,fuck' };
       if (!d.aiChannelId) d.aiChannelId = null;
       if (d.autoExportMinutes == null) d.autoExportMinutes = 0;
@@ -1381,6 +1507,78 @@ async function cacheGuildInvites(guild) {
   }
 }
 
+
+// ========== LEVELING ==========
+function xpForLevel(level) {
+  // Total XP required to reach this level from 0
+  return 5 * level * level + 50 * level + 100;
+}
+
+function levelFromXp(xp) {
+  let level = 0;
+  while (xpForLevel(level + 1) <= xp) level++;
+  return level;
+}
+
+function getLevelData(guildId, userId) {
+  if (!data.levels) data.levels = {};
+  if (!data.levels[guildId]) data.levels[guildId] = {};
+  if (!data.levels[guildId][userId]) data.levels[guildId][userId] = { xp: 0, level: 0 };
+  return data.levels[guildId][userId];
+}
+
+function addMessageXp(guildId, userId) {
+  if (!global.__levelCd) global.__levelCd = new Map();
+  const key = guildId + ':' + userId;
+  const now = Date.now();
+  const last = global.__levelCd.get(key) || 0;
+  if (now - last < LEVEL_COOLDOWN_MS) return null;
+  global.__levelCd.set(key, now);
+
+  const row = getLevelData(guildId, userId);
+  const gain = LEVEL_XP_MIN + Math.floor(Math.random() * (LEVEL_XP_MAX - LEVEL_XP_MIN + 1));
+  row.xp += gain;
+  const newLevel = levelFromXp(row.xp);
+  const leveled = newLevel > row.level;
+  row.level = newLevel;
+  saveData();
+  return { gain, leveled, level: row.level, xp: row.xp };
+}
+
+function buildLevelEmbed(user, member, guildId) {
+  const row = getLevelData(guildId, user.id);
+  const level = row.level;
+  const xp = row.xp;
+  const curNeed = xpForLevel(level);
+  const nextNeed = xpForLevel(level + 1);
+  const into = Math.max(0, xp - curNeed);
+  const span = Math.max(1, nextNeed - curNeed);
+  const pct = Math.min(100, Math.floor((into / span) * 100));
+  const filled = Math.round(pct / 10);
+  const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+
+  // Rank among guild
+  const all = Object.entries(data.levels[guildId] || {})
+    .map(([id, v]) => ({ id, xp: v.xp || 0 }))
+    .sort((a, b) => b.xp - a.xp);
+  const rank = all.findIndex((x) => x.id === user.id) + 1 || all.length;
+
+  const name = member?.displayName || user.username;
+  return new EmbedBuilder()
+    .setColor(0xfbbf24)
+    .setAuthor({ name: `${name}'s level`, iconURL: user.displayAvatarURL({ size: 128 }) })
+    .setThumbnail(user.displayAvatarURL({ size: 256 }))
+    .setDescription(
+      `**Level ${level}** · Rank **#${rank}**\n` +
+        `\`${bar}\` **${pct}%**\n` +
+        `XP: **${into.toLocaleString()}** / **${span.toLocaleString()}** to level ${level + 1}\n` +
+        `Total XP: **${xp.toLocaleString()}**`
+    )
+    .setFooter({ text: 'Ultimate Rewards · Leveling' })
+    .setTimestamp();
+}
+
+
 async function onReady() {
   console.log(`Logged in as ${client.user.tag}`);
   for (const [, guild] of client.guilds.cache) {
@@ -1407,10 +1605,37 @@ async function onReady() {
         .setDescription('Reroll giveaway winners')
         .addStringOption((o) =>
           o.setName('message_id').setDescription('Giveaway message ID').setRequired(false)
-        )
+        ),
+      new SlashCommandBuilder()
+        .setName('level')
+        .setDescription('Show your level card')
+        .addUserOption((o) =>
+          o.setName('user').setDescription('User to check').setRequired(false)
+        ),
+      new SlashCommandBuilder()
+        .setName('rank')
+        .setDescription('Show your rank card (same as /level)')
+        .addUserOption((o) =>
+          o.setName('user').setDescription('User to check').setRequired(false)
+        ),
+      new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('XP leaderboard for this server'),
+      new SlashCommandBuilder()
+        .setName('stock')
+        .setDescription('Show current stock status'),
+      new SlashCommandBuilder()
+        .setName('clear')
+        .setDescription('Delete recent messages in this channel')
+        .addIntegerOption((o) =>
+          o.setName('amount').setDescription('1-100').setRequired(true).setMinValue(1).setMaxValue(100)
+        ),
+      new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('List main bot commands')
     ].map((c) => c.toJSON());
     await client.application.commands.set(cmds);
-    console.log('Slash commands registered: /gstart /greroll');
+    console.log('Slash commands registered: /gstart /greroll /level /rank /leaderboard /stock /clear /help');
   } catch (e) {
     console.error('slash register:', e.message);
   }
@@ -1875,6 +2100,76 @@ client.on('interactionCreate', async (interaction) => {
       await endGiveaway(mid, true);
       return interaction.reply({ content: 'Rerolled winners.', ephemeral: true });
     }
+
+    if (interaction.commandName === 'stock') {
+      return interaction.reply({ embeds: [buildStockListEmbed()] });
+    }
+    if (interaction.commandName === 'clear') {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) && !isStaff(interaction.member)) {
+        return interaction.reply({ content: 'Staff / Manage Messages only.', ephemeral: true });
+      }
+      const amount = interaction.options.getInteger('amount', true);
+      await interaction.reply({ content: `🧹 Deleting up to **${amount}** messages…`, ephemeral: true });
+      try {
+        const deleted = await interaction.channel.bulkDelete(amount, true);
+        await interaction.followup.send({ content: `Deleted **${deleted.size}** messages.`, ephemeral: true });
+      } catch {
+        await interaction.followup.send({ content: 'Bulk delete failed (14-day limit?).', ephemeral: true });
+      }
+      return;
+    }
+    if (interaction.commandName === 'help') {
+      const embed = new EmbedBuilder()
+        .setColor(0xfbbf24)
+        .setTitle('Ultimate Rewards — Commands')
+        .setDescription(
+          'Most features work with **`$`** and **`/`** where registered.\n\n' +
+            '**Stock** · `$stock` `/stock`\n' +
+            '**Levels** · `$level` `/level` `/rank` `/leaderboard`\n' +
+            '**Clear** · `$clear 50` `/clear amount:50`\n' +
+            '**Giveaways** · `/gstart` `/greroll`\n' +
+            '**Staff** · `$staffstats` `$pay` `$claim` `$help`\n' +
+            '**Economy** · `$ultimate` …'
+        );
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+    if (interaction.commandName === 'level' || interaction.commandName === 'rank') {
+      const target = interaction.options.getUser('user') || interaction.user;
+      const member =
+        interaction.guild?.members.cache.get(target.id) ||
+        (await interaction.guild?.members.fetch(target.id).catch(() => null));
+      const embed = buildLevelEmbed(target, member, interaction.guildId);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (interaction.commandName === 'leaderboard') {
+      const gid = interaction.guildId;
+      const all = Object.entries(data.levels?.[gid] || {})
+        .map(([id, v]) => ({ id, xp: v.xp || 0, level: v.level || levelFromXp(v.xp || 0) }))
+        .sort((a, b) => b.xp - a.xp)
+        .slice(0, 10);
+      if (!all.length) {
+        return interaction.reply({ content: 'No XP yet — keep chatting!', ephemeral: true });
+      }
+      const lines = [];
+      for (let i = 0; i < all.length; i++) {
+        const e = all[i];
+        let name = e.id;
+        try {
+          const u = await client.users.fetch(e.id);
+          name = u.username;
+        } catch (_) {}
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+        lines.push(`${medal} **${name}** — Lvl ${e.level} · ${e.xp.toLocaleString()} XP`);
+      }
+      const embed = new EmbedBuilder()
+        .setColor(0xfbbf24)
+        .setTitle('🏆 XP Leaderboard')
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: 'Ultimate Rewards · Levels' })
+        .setTimestamp();
+      return interaction.reply({ embeds: [embed] });
+    }
   } catch (e) {
     console.error('interaction:', e.message);
     if (interaction.isRepliable() && !interaction.replied) {
@@ -1886,6 +2181,25 @@ client.on('interactionCreate', async (interaction) => {
 
 client.on('messageCreate', async (message) => {
   if (!message.guild) return;
+
+  // Level XP for real users (not bots)
+  if (!message.author.bot && message.content && !message.content.startsWith(PREFIX)) {
+    try {
+      const res = addMessageXp(message.guild.id, message.author.id);
+      if (res?.leveled) {
+        const gg = new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle('🎉 Level up! GG')
+          .setDescription(
+            `${message.author} reached **Level ${res.level}**!
+` +
+              `Keep chatting to climb the leaderboard. Use \`/level\` or \`$level\`.`
+          )
+          .setThumbnail(message.author.displayAvatarURL({ size: 128 }));
+        message.channel.send({ embeds: [gg] }).catch(() => {});
+      }
+    } catch (_) {}
+  }
 
   // ========== Falcon -i invite sync ==========
   if (message.author.bot && message.author.id === FALCON_BOT_ID) {
@@ -2481,15 +2795,36 @@ if (sub === 'clear') {
     }
   }
 
-  // ========== $clear ==========
-  // Shortcut to clear MCFA stock
-  if (cmd === 'clear') {
+  // ========== $clear [amount] — delete channel messages ==========
+  if (cmd === 'clear' || cmd === 'purge') {
     if (!isStaff(message.member)) return message.reply('Staff only.');
-    const n = data.mcfaStock.length;
+    if (!message.member.permissions.has(PermissionFlagsBits.ManageMessages) && !isStaff(message.member)) {
+      return message.reply('Need **Manage Messages**.');
+    }
+    const amount = Math.min(100, Math.max(1, parseInt(args[0], 10) || 0));
+    if (!amount) {
+      return message.reply('Usage: `$clear <1-100>` — deletes that many messages.\n`$clearstock` — clears MCFA stock.');
+    }
+    try {
+      const deleted = await message.channel.bulkDelete(amount + 1, true); // +1 includes command
+      const note = await message.channel.send(`🧹 Deleted **${Math.max(0, deleted.size - 1)}** messages.`);
+      setTimeout(() => note.delete().catch(() => {}), 4000);
+    } catch (e) {
+      return message.reply('Could not bulk delete (messages may be older than 14 days).');
+    }
+    return;
+  }
+
+  if (cmd === 'clearstock') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    ensureStocks(data);
+    const n = (data.stocks.mcfa || data.mcfaStock || []).length;
     data.mcfaStock = [];
+    if (data.stocks) data.stocks.mcfa = [];
     saveData();
     return message.reply(`Cleared **${n}** from MCFA stock.`);
   }
+
 
   // ========== $online @role ==========
   if (cmd === 'online') {
@@ -3310,6 +3645,45 @@ if (sub === 'clear') {
     }
     await startRewardClaimFlow(message.channel, message.author);
     return;
+  }
+
+  // ========== $level / $rank / $leaderboard ==========
+  if (cmd === 'level' || cmd === 'rank') {
+    let target = message.mentions.users.first() || message.author;
+    if (!message.mentions.users.first() && args[0]) {
+      target = await client.users.fetch(args[0].replace(/[<@!>]/g, '')).catch(() => message.author);
+    }
+    const member =
+      message.guild.members.cache.get(target.id) ||
+      (await message.guild.members.fetch(target.id).catch(() => null));
+    return message.reply({ embeds: [buildLevelEmbed(target, member, message.guild.id)] });
+  }
+  if (cmd === 'leaderboard' || cmd === 'lb' || cmd === 'levels') {
+    const gid = message.guild.id;
+    const all = Object.entries(data.levels?.[gid] || {})
+      .map(([id, v]) => ({ id, xp: v.xp || 0, level: v.level || levelFromXp(v.xp || 0) }))
+      .sort((a, b) => b.xp - a.xp)
+      .slice(0, 10);
+    if (!all.length) return message.reply('No XP yet — keep chatting!');
+    const lines = [];
+    for (let i = 0; i < all.length; i++) {
+      const e = all[i];
+      let name = e.id;
+      try {
+        name = (await client.users.fetch(e.id)).username;
+      } catch (_) {}
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+      lines.push(`${medal} **${name}** — Lvl ${e.level} · ${e.xp.toLocaleString()} XP`);
+    }
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xfbbf24)
+          .setTitle('🏆 XP Leaderboard')
+          .setDescription(lines.join('\n'))
+          .setFooter({ text: 'Ultimate Rewards · Levels' })
+      ]
+    });
   }
 
   // ========== $staffstats ==========

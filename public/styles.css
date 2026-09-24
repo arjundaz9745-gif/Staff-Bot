@@ -46,7 +46,7 @@ html, body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(0.5px);
+  filter: blur(var(--blur, 0.5px));
   transform: scale(1.02);
 }
 #pageBg .bg-desktop { display: block; }
@@ -54,7 +54,7 @@ html, body {
 #pageBg .bg-shade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(5,5,12,0.35) 0%, rgba(5,5,12,0.55) 45%, rgba(5,5,12,0.78) 100%);
+  background: linear-gradient(180deg, rgba(5,5,12,0.20) 0%, rgba(5,5,12,0.40) 50%, rgba(5,5,12,0.65) 100%);
 }
 @media (max-width: 900px) {
   #pageBg .bg-desktop { display: none; }
@@ -63,30 +63,6 @@ html, body {
 #gate, #app { position: relative; z-index: 1; }
 
 
-body::before { display: none !important;
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background: #0a0a12 url('/bg-desktop.jpg') center / cover no-repeat;
-  filter: blur(var(--blur));
-  transform: scale(1.03);
-  opacity: 0.85;
-}
-body::after { display: none !important;
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(251, 191, 36, 0.12), transparent 50%),
-    radial-gradient(ellipse 60% 40% at 100% 50%, rgba(96, 165, 250, 0.08), transparent 45%),
-    linear-gradient(180deg, rgba(5,5,8,0.25) 0%, rgba(5,5,8,0.55) 50%, rgba(5,5,8,0.82) 100%);
-  pointer-events: none;
-}
-@media (max-width: 900px) {
-  body::before { display: none !important; background-image: url('/bg-mobile.jpg'); }
-}
 
 /* ——— Sidebar ——— */
 .sidebar {

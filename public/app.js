@@ -85,6 +85,9 @@ function tab(name) {
   if (name === 'staffcmd') loadChannel(STAFF_CMD, 'staffCmdBox');
   if (name === 'stock') loadStock();
   if (name === 'methods') loadMethods();
+  if (name === 'giveaways') loadGiveaways();
+  if (name === 'levels') loadLevels();
+  if (name === 'servers') loadServers();
   if (name === 'settings') loadToggles();
 }
 
@@ -300,6 +303,73 @@ async function loadMethods() {
 }
 
 
+
+async function loadGiveaways() {
+  try {
+    const j = await api('/api/giveaways');
+    const el = document.getElementById('giveawayList');
+    if (!(j.giveaways || []).length) {
+      el.innerHTML = '<p class="muted">No giveaways yet. Use /gstart in Discord.</p>';
+      return;
+    }
+    el.innerHTML = j.giveaways.map((g) => `
+      <div class="toggle" style="flex-direction:column;align-items:flex-start;gap:4px">
+        <div style="display:flex;justify-content:space-between;width:100%">
+          <b>${g.prize || 'Prize'}</b>
+          <span class="badge ${g.ended ? '' : 'green'}">${g.ended ? 'Ended' : 'Live'}</span>
+        </div>
+        <span class="muted">Entries: ${g.entries} · Winners: ${g.winners} · Ends: ${g.endsAt ? new Date(g.endsAt).toLocaleString() : '—'}</span>
+        <span class="muted" style="font-size:11px">ID: ${g.id}</span>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('giveawayList').textContent = e.message;
+  }
+}
+
+async function loadLevels() {
+  const guildId = document.getElementById('levelGuildId')?.value?.trim();
+  if (!guildId) {
+    document.getElementById('levelList').innerHTML = '<p class="muted">Enter a Guild ID first</p>';
+    return;
+  }
+  try {
+    const j = await api('/api/levels?guildId=' + encodeURIComponent(guildId));
+    const el = document.getElementById('levelList');
+    if (!(j.levels || []).length) {
+      el.innerHTML = '<p class="muted">No level data for this guild yet</p>';
+      return;
+    }
+    el.innerHTML = j.levels.map((r, i) =>
+      `<div class="toggle"><span class="label">#${i + 1} · ${r.userId}</span><b>Lvl ${r.level} · ${r.xp} XP</b></div>`
+    ).join('');
+  } catch (e) {
+    document.getElementById('levelList').textContent = e.message;
+  }
+}
+
+async function loadServers() {
+  try {
+    const j = await api('/api/servers');
+    const el = document.getElementById('serverList');
+    el.innerHTML = (j.servers || []).map((s) => `
+      <div class="toggle" style="cursor:pointer" data-gid="${s.id}">
+        <span class="label"><b>${s.name}</b><br/><span class="muted">${s.id} · ${s.memberCount || '?'} members</span></span>
+        <span class="badge ${s.configured ? 'green' : ''}">${s.configured ? 'Configured' : 'Default'}</span>
+      </div>
+    `).join('') || '<p class="muted">Bot is in no servers</p>';
+    el.querySelectorAll('[data-gid]').forEach((row) => {
+      row.onclick = () => {
+        document.getElementById('cfgGuildId').value = row.getAttribute('data-gid');
+        document.getElementById('levelGuildId').value = row.getAttribute('data-gid');
+      };
+    });
+  } catch (e) {
+    document.getElementById('serverList').textContent = e.message;
+  }
+}
+
+
 async function loadToggles() {
   try {
     const j = await api('/api/toggles');
@@ -340,10 +410,47 @@ async function loadToggles() {
   }
 }
 
+
+function applyBackground(url) {
+  const desktop = document.getElementById('bgDesktop');
+  const mobile = document.getElementById('bgMobile');
+  const msg = document.getElementById('bgMsg');
+  const bust = (u) => {
+    if (!u) return u;
+    const sep = u.includes('?') ? '&' : '?';
+    return u + sep + 'v=' + Date.now();
+  };
+  if (url && url.trim()) {
+    const u = bust(url.trim());
+    if (desktop) desktop.src = u;
+    if (mobile) mobile.src = u;
+    localStorage.setItem('ultimate_bg_url', url.trim());
+    if (msg) msg.textContent = 'Background applied (saved on this device)';
+  } else {
+    const d = 'https://kommodo.ai/i/azE2d9AUtgWeIkpbsQbm';
+    const m = 'https://kommodo.ai/i/pK7lEZElMj1aalGIRGp9';
+    if (desktop) desktop.src = d + (d.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    if (mobile) mobile.src = m + (m.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    localStorage.removeItem('ultimate_bg_url');
+    if (msg) msg.textContent = 'Using your default PC/Mobile backgrounds';
+  }
+}
+
 async function boot() {
   document.documentElement.style.setProperty('--blur', '0.5px');
   const blurInput = document.getElementById('blur');
   if (blurInput) blurInput.value = '0.5';
+  const savedBg = localStorage.getItem('ultimate_bg_url');
+  const bgInput = document.getElementById('bgUrl');
+  if (bgInput && savedBg) bgInput.value = savedBg;
+  if (savedBg) {
+    applyBackground(savedBg);
+  } else {
+    const desktop = document.getElementById('bgDesktop');
+    const mobile = document.getElementById('bgMobile');
+    if (desktop) desktop.src = 'https://kommodo.ai/i/azE2d9AUtgWeIkpbsQbm';
+    if (mobile) mobile.src = 'https://kommodo.ai/i/pK7lEZElMj1aalGIRGp9';
+  }
 
   const s = await api('/api/status');
   if (!s.authed) {
@@ -405,7 +512,9 @@ document.getElementById('btnSaveSettings').onclick = async () => {
   }
 };
 document.getElementById('btnBlur').onclick = () => {
-  document.documentElement.style.setProperty('--blur', (document.getElementById('blur').value || 0.5) + 'px');
+  const v = (document.getElementById('blur').value || 0.5) + 'px';
+  document.documentElement.style.setProperty('--blur', v);
+  document.querySelectorAll('#pageBg img').forEach((img) => { img.style.filter = 'blur(' + v + ')'; });
 };
 document.getElementById('btnExport').onclick = async () => {
   const r = await fetch('/api/export', { credentials: 'same-origin' });
@@ -532,6 +641,59 @@ document.getElementById('methodCards')?.addEventListener('click', async (e) => {
     document.getElementById('methodMsg').textContent = full?.body ? 'Loaded' : 'Empty — paste method text & Save';
   } catch (err) {
     document.getElementById('methodMsg').textContent = err.message;
+  }
+});
+
+
+document.getElementById('btnBgApply')?.addEventListener('click', () => {
+  const url = document.getElementById('bgUrl')?.value || '';
+  if (!url.trim()) {
+    document.getElementById('bgMsg').textContent = 'Paste an image URL first (or use Reset default)';
+    return;
+  }
+  applyBackground(url);
+});
+document.getElementById('btnBgReset')?.addEventListener('click', () => {
+  const bgInput = document.getElementById('bgUrl');
+  if (bgInput) bgInput.value = '';
+  applyBackground('');
+});
+
+document.getElementById('btnGiveaways')?.addEventListener('click', () => loadGiveaways());
+document.getElementById('btnLevels')?.addEventListener('click', () => loadLevels());
+document.getElementById('btnServers')?.addEventListener('click', () => loadServers());
+document.getElementById('btnFalconSync')?.addEventListener('click', async () => {
+  const guildId = document.getElementById('levelGuildId')?.value?.trim() || '';
+  try {
+    const j = await api('/api/falcon/sync?guildId=' + encodeURIComponent(guildId));
+    document.getElementById('falconOut').textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    document.getElementById('falconOut').textContent = e.message;
+  }
+});
+document.getElementById('btnCfgSave')?.addEventListener('click', async () => {
+  const msg = document.getElementById('cfgMsg');
+  let config = {};
+  try {
+    const raw = document.getElementById('cfgJson').value.trim();
+    if (raw) config = JSON.parse(raw);
+  } catch {
+    msg.textContent = 'Invalid JSON';
+    return;
+  }
+  try {
+    await api('/api/servers/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        guildId: document.getElementById('cfgGuildId').value.trim(),
+        password: document.getElementById('cfgPassword').value,
+        config
+      })
+    });
+    msg.textContent = 'Saved ✓';
+    loadServers();
+  } catch (e) {
+    msg.textContent = e.message;
   }
 });
 

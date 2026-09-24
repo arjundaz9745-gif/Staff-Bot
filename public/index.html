@@ -8,8 +8,8 @@
 </head>
 <body>
   <div id="pageBg" aria-hidden="true">
-    <img src="/bg-desktop.jpg" alt="" class="bg-desktop" />
-    <img src="/bg-mobile.jpg" alt="" class="bg-mobile" />
+    <img src="https://kommodo.ai/i/azE2d9AUtgWeIkpbsQbm" alt="" class="bg-desktop" id="bgDesktop" />
+    <img src="https://kommodo.ai/i/pK7lEZElMj1aalGIRGp9" alt="" class="bg-mobile" id="bgMobile" />
     <div class="bg-shade"></div>
   </div>
 
@@ -42,6 +42,9 @@
         <div class="nav-label">Inventory</div>
         <button type="button" data-tab="stock">Stock</button>
         <button type="button" data-tab="methods">Methods</button>
+        <button type="button" data-tab="giveaways">Giveaways</button>
+        <button type="button" data-tab="levels">Levels</button>
+        <button type="button" data-tab="servers">Servers</button>
         <div class="nav-label">System</div>
         <button type="button" data-tab="settings">Settings</button>
         <button type="button" data-tab="backup">Export</button>
@@ -78,6 +81,9 @@
         <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">Economy</div><div class="fd">$ultimate coins, daily, cf, give, top</div></div>
         <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">TeamUp / LFG</div><div class="fd">$team posts & private $teamup channels</div></div>
         <div class="feature-card" data-goto="commands"><div class="fi">•</div><div class="ft">Invite claims</div><div class="fd">$claim tiers + auto staff ping</div></div>
+        <div class="feature-card" data-goto="giveaways"><div class="fi">•</div><div class="ft">Giveaways</div><div class="fd">Active & ended /gstart list</div></div>
+        <div class="feature-card" data-goto="levels"><div class="fi">•</div><div class="ft">Levels</div><div class="fd">XP ranks · /level · Falcon sync</div></div>
+        <div class="feature-card" data-goto="servers"><div class="fi">•</div><div class="ft">Servers</div><div class="fd">Multi-server config (password)</div></div>
         <div class="feature-card" data-goto="backup"><div class="fi">•</div><div class="ft">Backup</div><div class="fd">Export / import full JSON data</div></div>
       </div>
       <hr class="sep" />
@@ -225,6 +231,45 @@
       <div id="rewardTiersOut" class="muted">Loading…</div>
     </section>
 
+    
+    <section id="tab-giveaways" class="card hidden">
+      <h2>Giveaways</h2>
+      <p class="muted">Live list from /gstart · auto-updates when you refresh</p>
+      <hr class="sep" />
+      <div id="giveawayList"></div>
+      <button type="button" class="btn ghost" id="btnGiveaways">Refresh</button>
+    </section>
+
+    <section id="tab-levels" class="card hidden">
+      <h2>Levels</h2>
+      <p class="muted">XP leaderboard · Falcon invite/message sync status</p>
+      <label class="muted">Guild ID</label>
+      <input id="levelGuildId" placeholder="Server ID" />
+      <button type="button" class="btn" id="btnLevels">Load top 50</button>
+      <button type="button" class="btn ghost" id="btnFalconSync">Falcon sync view</button>
+      <hr class="sep" />
+      <div id="levelList"></div>
+      <pre id="falconOut" class="muted" style="white-space:pre-wrap;font-size:12px"></pre>
+    </section>
+
+    <section id="tab-servers" class="card hidden">
+      <h2>Servers</h2>
+      <p class="muted">Bot guilds · configure with admin password</p>
+      <hr class="sep" />
+      <div id="serverList"></div>
+      <button type="button" class="btn ghost" id="btnServers">Refresh servers</button>
+      <hr class="sep" />
+      <h3>Configure server</h3>
+      <label class="muted">Guild ID</label>
+      <input id="cfgGuildId" placeholder="Server ID" />
+      <label class="muted">Admin password</label>
+      <input id="cfgPassword" type="password" placeholder="DASHBOARD_ADMIN_PASSWORD" />
+      <label class="muted">Notes / config JSON (optional)</label>
+      <textarea id="cfgJson" rows="4" placeholder='{"welcome":true,"levelUpChannel":""}'></textarea>
+      <button type="button" class="btn" id="btnCfgSave">Save config</button>
+      <p id="cfgMsg" class="muted"></p>
+    </section>
+
     <section id="tab-settings" class="card hidden">
       <h2>Settings</h2>
       <p class="muted">Enable / disable modules · protection · AI</p>
@@ -248,9 +293,17 @@
       <p id="setMsg" class="muted"></p>
       <hr class="sep" />
       <h3>UI</h3>
+      <label class="muted">Custom background image URL</label>
+      <input id="bgUrl" type="url" placeholder="https://i.imgur.com/your-image.jpg" />
+      <p class="muted" style="margin-top:-6px;margin-bottom:10px">Paste any direct image link (Imgur, Discord CDN, etc.). Leave empty for default.</p>
       <label class="muted">Background blur (px)</label>
       <input id="blur" type="number" min="0" max="12" step="0.5" value="0.5" />
-      <button type="button" class="btn ghost" id="btnBlur">Apply blur</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+        <button type="button" class="btn" id="btnBgApply">Apply background</button>
+        <button type="button" class="btn ghost" id="btnBgReset">Reset default</button>
+        <button type="button" class="btn ghost" id="btnBlur">Apply blur</button>
+      </div>
+      <p id="bgMsg" class="muted"></p>
       <a class="btn ghost" href="/auth/logout">Logout</a>
     </section>
 

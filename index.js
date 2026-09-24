@@ -24,9 +24,9 @@ const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || '';
 const PREFIX = process.env.PREFIX || '$';
 const PORT = process.env.PORT || 3000;
 const DASHBOARD_ADMIN_PASSWORD = process.env.DASHBOARD_ADMIN_PASSWORD || 'ultimate-admin';
-const LEVEL_XP_MIN = 15;
-const LEVEL_XP_MAX = 25;
-const LEVEL_COOLDOWN_MS = 60_000; // XP once per minute per user
+const LEVEL_XP_MIN = 25;
+const LEVEL_XP_MAX = 40;
+const LEVEL_COOLDOWN_MS = 12_000; // XP every 12s while chatting
 
 
 // Staff role hierarchy for $staffstats (highest first)
@@ -56,16 +56,30 @@ const MASS_PING_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 // Product stock keys (Ultimate multi-stock)
 const PRODUCT_STOCKS = {
-  mcfa: { label: 'MCFA', emoji: '🟩', cmd: ['mcfa'] },
-  donut: { label: 'DONUT', emoji: '🍩', cmd: ['donut'] },
-  hypixel: { label: 'HYPIXEL', emoji: '⚔️', cmd: ['hypixel', 'hyp'] },
-  nitro: { label: 'NITRO', emoji: '💜', cmd: ['nitro'] },
-  netflix: { label: 'NETFLIX', emoji: '🎬', cmd: ['netflix'] },
-  steam: { label: 'STEAM', emoji: '🎮', cmd: ['steam'] },
-  crunchyroll: { label: 'CRUNCHYROLL', emoji: '🍥', cmd: ['crunchyroll', 'cruncyroll', 'cr'] },
-  xbox: { label: 'XBOX', emoji: '🎮', cmd: ['xbox'] },
-  custom: { label: 'CUSTOM', emoji: '📦', cmd: ['custom'] }
+  mcfa: { label: 'MCFA', emoji: '', cmd: ['mcfa'] },
+  donut: { label: 'DONUT', emoji: '', cmd: ['donut'] },
+  hypixel: { label: 'HYPIXEL', emoji: '', cmd: ['hypixel', 'hyp'] },
+  nitro: { label: 'NITRO PROMO', emoji: '', cmd: ['nitro'] },
+  netflix: { label: 'NETFLIX', emoji: '', cmd: ['netflix'] },
+  steam: { label: 'STEAM', emoji: '', cmd: ['steam'] },
+  crunchyroll: { label: 'CRUNCHYROLL', emoji: '', cmd: ['crunchyroll', 'cruncyroll', 'cr'] },
+  xbox: { label: 'XBOX', emoji: '', cmd: ['xbox'] },
+  custom: { label: 'CUSTOM', emoji: '', cmd: ['custom'] }
 };
+
+/** Prefer guild custom emoji by name, else plain text */
+function e(guild, names, fallback = '') {
+  if (!guild || !guild.emojis) return fallback;
+  const list = Array.isArray(names) ? names : [names];
+  for (const name of list) {
+    const found = guild.emojis.cache.find(
+      (em) => em.name && em.name.toLowerCase() === String(name).toLowerCase()
+    );
+    if (found) return found.toString();
+  }
+  return fallback;
+}
+
 
 const VOUCH_CHANNEL_ID = process.env.VOUCH_CHANNEL_ID || '1547183217449242644';
 const PROOF_CHANNEL_ID = process.env.PROOF_CHANNEL_ID || '1547183218875301968';
@@ -122,33 +136,36 @@ function resolveProductKey(name) {
   return null;
 }
 
-function buildStockListEmbed() {
+function buildStockListEmbed(guild) {
   ensureStocks(data);
   const count = (key) => (data.stocks[key] || []).length;
-  const line = (emoji, label, key) => `${emoji} **${label}**  |  \`${count(key)}\``;
+  const line = (label, key) => {
+    const mark = e(guild, [key, label.replace(/\s+/g, '')], '•');
+    return `${mark} **${label}**  |  \`${count(key)}\``;
+  };
 
   const booster = [
-    line('⭐', 'NITRO PROMO', 'nitro'),
-    line('🎮', 'XBOX', 'xbox'),
-    line('🍥', 'CRUNCHYROLL', 'crunchyroll')
+    line('NITRO PROMO', 'nitro'),
+    line('XBOX', 'xbox'),
+    line('CRUNCHYROLL', 'crunchyroll')
   ].join('\n');
 
   const general = [
-    line('🍩', 'DONUT', 'donut'),
-    line('🟩', 'MCFA', 'mcfa'),
-    line('⚔️', 'HYPIXEL', 'hypixel'),
-    line('🎬', 'NETFLIX', 'netflix'),
-    line('🎮', 'STEAM', 'steam'),
-    line('📦', 'CUSTOM', 'custom')
+    line('DONUT', 'donut'),
+    line('MCFA', 'mcfa'),
+    line('HYPIXEL', 'hypixel'),
+    line('NETFLIX', 'netflix'),
+    line('STEAM', 'steam'),
+    line('CUSTOM', 'custom')
   ].join('\n');
 
   return new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setTitle('📦 CURRENT STOCK STATUS')
+    .setTitle('CURRENT STOCK STATUS')
     .setDescription(
       `**BOOSTER ACCESS**\n${booster}\n\n` +
         `**GENERAL STOCK**\n${general}\n\n` +
-        `USE \`$buy <product>\` OR \`$pay @user\` TO DELIVER`
+        `Use \`$buy <product>\` or \`$pay @user\` to deliver`
     )
     .setFooter({ text: 'Ultimate Rewards · Stock' })
     .setTimestamp();
@@ -1510,8 +1527,10 @@ async function cacheGuildInvites(guild) {
 
 // ========== LEVELING ==========
 function xpForLevel(level) {
-  // Total XP required to reach this level from 0
-  return 5 * level * level + 50 * level + 100;
+  // Easier early levels so people see progress quickly
+  // L1≈40, L2≈100, L3≈180, L5≈400, L10≈1200
+  if (level <= 0) return 0;
+  return Math.floor(20 * level * level + 20 * level);
 }
 
 function levelFromXp(xp) {
@@ -1588,54 +1607,65 @@ async function onReady() {
 
   try {
     const cmds = [
-      new SlashCommandBuilder()
-        .setName('gstart')
-        .setDescription('Start a giveaway')
-        .addStringOption((o) =>
-          o.setName('time').setDescription('Duration e.g. 10m, 2h, 1d').setRequired(true)
-        )
-        .addIntegerOption((o) =>
-          o.setName('winners').setDescription('Number of winners').setRequired(true).setMinValue(1).setMaxValue(20)
-        )
-        .addStringOption((o) =>
-          o.setName('prize').setDescription('Prize / item').setRequired(true)
-        ),
-      new SlashCommandBuilder()
-        .setName('greroll')
-        .setDescription('Reroll giveaway winners')
-        .addStringOption((o) =>
-          o.setName('message_id').setDescription('Giveaway message ID').setRequired(false)
-        ),
-      new SlashCommandBuilder()
-        .setName('level')
-        .setDescription('Show your level card')
-        .addUserOption((o) =>
-          o.setName('user').setDescription('User to check').setRequired(false)
-        ),
-      new SlashCommandBuilder()
-        .setName('rank')
-        .setDescription('Show your rank card (same as /level)')
-        .addUserOption((o) =>
-          o.setName('user').setDescription('User to check').setRequired(false)
-        ),
-      new SlashCommandBuilder()
-        .setName('leaderboard')
-        .setDescription('XP leaderboard for this server'),
-      new SlashCommandBuilder()
-        .setName('stock')
-        .setDescription('Show current stock status'),
-      new SlashCommandBuilder()
-        .setName('clear')
-        .setDescription('Delete recent messages in this channel')
-        .addIntegerOption((o) =>
-          o.setName('amount').setDescription('1-100').setRequired(true).setMinValue(1).setMaxValue(100)
-        ),
-      new SlashCommandBuilder()
-        .setName('help')
-        .setDescription('List main bot commands')
+      new SlashCommandBuilder().setName('gstart').setDescription('Start a giveaway')
+        .addStringOption((o) => o.setName('time').setDescription('e.g. 10m, 2h').setRequired(true))
+        .addIntegerOption((o) => o.setName('winners').setRequired(true).setMinValue(1).setMaxValue(20))
+        .addStringOption((o) => o.setName('prize').setRequired(true)),
+      new SlashCommandBuilder().setName('greroll').setDescription('Reroll giveaway')
+        .addStringOption((o) => o.setName('message_id').setRequired(false)),
+      new SlashCommandBuilder().setName('level').setDescription('Show level card')
+        .addUserOption((o) => o.setName('user').setRequired(false)),
+      new SlashCommandBuilder().setName('rank').setDescription('Show rank card')
+        .addUserOption((o) => o.setName('user').setRequired(false)),
+      new SlashCommandBuilder().setName('leaderboard').setDescription('XP leaderboard'),
+      new SlashCommandBuilder().setName('stock').setDescription('Current stock status'),
+      new SlashCommandBuilder().setName('clear').setDescription('Delete messages')
+        .addIntegerOption((o) => o.setName('amount').setRequired(true).setMinValue(1).setMaxValue(100)),
+      new SlashCommandBuilder().setName('help').setDescription('Command list'),
+      new SlashCommandBuilder().setName('ping').setDescription('Bot latency'),
+      new SlashCommandBuilder().setName('avatar').setDescription('User avatar')
+        .addUserOption((o) => o.setName('user').setRequired(false)),
+      new SlashCommandBuilder().setName('userinfo').setDescription('User info')
+        .addUserOption((o) => o.setName('user').setRequired(false)),
+      new SlashCommandBuilder().setName('serverinfo').setDescription('Server info'),
+      new SlashCommandBuilder().setName('snipe').setDescription('Last deleted message'),
+      new SlashCommandBuilder().setName('membercount').setDescription('Member count'),
+      new SlashCommandBuilder().setName('uptime').setDescription('Bot uptime'),
+      new SlashCommandBuilder().setName('coinflip').setDescription('Heads or tails'),
+      new SlashCommandBuilder().setName('poll').setDescription('Create a poll')
+        .addStringOption((o) => o.setName('question').setRequired(true)),
+      new SlashCommandBuilder().setName('remind').setDescription('Set a reminder')
+        .addStringOption((o) => o.setName('time').setDescription('10m, 1h').setRequired(true))
+        .addStringOption((o) => o.setName('text').setRequired(true)),
+      new SlashCommandBuilder().setName('choose').setDescription('Pick randomly')
+        .addStringOption((o) => o.setName('options').setDescription('a | b | c').setRequired(true)),
+      new SlashCommandBuilder().setName('claim').setDescription('Claim invite reward (tickets)'),
+      new SlashCommandBuilder().setName('staffstats').setDescription('Staff dashboard stats'),
+      new SlashCommandBuilder().setName('ultimate').setDescription('Economy balance')
+        .addUserOption((o) => o.setName('user').setRequired(false)),
+      new SlashCommandBuilder().setName('online').setDescription('Online members in a role')
+        .addRoleOption((o) => o.setName('role').setRequired(true)),
+      new SlashCommandBuilder().setName('pay').setDescription('Pay 1 MCFA from stock (staff)')
+        .addUserOption((o) => o.setName('user').setRequired(true)),
+      new SlashCommandBuilder().setName('lock').setDescription('Lock channel (staff)'),
+      new SlashCommandBuilder().setName('unlock').setDescription('Unlock channel (staff)'),
+      new SlashCommandBuilder().setName('slowmode').setDescription('Set slowmode (staff)')
+        .addIntegerOption((o) => o.setName('seconds').setRequired(true).setMinValue(0).setMaxValue(21600)),
+      new SlashCommandBuilder().setName('say').setDescription('Bot says text (staff)')
+        .addStringOption((o) => o.setName('text').setRequired(true)),
+      new SlashCommandBuilder().setName('announce').setDescription('Announce embed (staff)')
+        .addStringOption((o) => o.setName('text').setRequired(true)),
+      new SlashCommandBuilder().setName('addxp').setDescription('Add XP (staff)')
+        .addUserOption((o) => o.setName('user').setRequired(true))
+        .addIntegerOption((o) => o.setName('amount').setRequired(true).setMinValue(1)),
+      new SlashCommandBuilder().setName('inv').setDescription('Show invites')
+        .addUserOption((o) => o.setName('user').setRequired(false)),
+      new SlashCommandBuilder().setName('botinvite').setDescription('Bot invite link'),
+      new SlashCommandBuilder().setName('clearstock').setDescription('Clear MCFA stock (staff)')
     ].map((c) => c.toJSON());
+
     await client.application.commands.set(cmds);
-    console.log('Slash commands registered: /gstart /greroll /level /rank /leaderboard /stock /clear /help');
+    console.log('Slash commands registered: full set');
   } catch (e) {
     console.error('slash register:', e.message);
   }
@@ -2102,7 +2132,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.commandName === 'stock') {
-      return interaction.reply({ embeds: [buildStockListEmbed()] });
+      return interaction.reply({ embeds: [buildStockListEmbed(interaction.guild)] });
     }
     if (interaction.commandName === 'clear') {
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) && !isStaff(interaction.member)) {
@@ -2159,16 +2189,240 @@ client.on('interactionCreate', async (interaction) => {
           const u = await client.users.fetch(e.id);
           name = u.username;
         } catch (_) {}
-        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+        const medal = `**#${i + 1}**`;
         lines.push(`${medal} **${name}** — Lvl ${e.level} · ${e.xp.toLocaleString()} XP`);
       }
       const embed = new EmbedBuilder()
         .setColor(0xfbbf24)
-        .setTitle('🏆 XP Leaderboard')
+        .setTitle('XP LEADERBOARD')
         .setDescription(lines.join('\n'))
         .setFooter({ text: 'Ultimate Rewards · Levels' })
         .setTimestamp();
       return interaction.reply({ embeds: [embed] });
+    }
+
+    // ---- shared slash handlers for remaining commands ----
+    const name = interaction.commandName;
+    const guild = interaction.guild;
+    const user = interaction.user;
+    const member = interaction.member;
+
+    if (name === 'ping') {
+      const t = Date.now();
+      await interaction.reply({ content: 'Pinging…', ephemeral: true });
+      return interaction.editReply(`Pong · \`${Date.now() - t}ms\` · WS \`${Math.round(client.ws.ping)}ms\``);
+    }
+    if (name === 'avatar') {
+      const u = interaction.options.getUser('user') || user;
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${u.username}`).setImage(u.displayAvatarURL({ size: 4096 }))]
+      });
+    }
+    if (name === 'userinfo') {
+      const u = interaction.options.getUser('user') || user;
+      const m = guild?.members.cache.get(u.id) || (await guild?.members.fetch(u.id).catch(() => null));
+      const row = getLevelData(guild.id, u.id);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setAuthor({ name: u.tag, iconURL: u.displayAvatarURL() })
+            .setThumbnail(u.displayAvatarURL({ size: 256 }))
+            .addFields(
+              { name: 'ID', value: u.id, inline: true },
+              { name: 'Level', value: `${row.level} (${row.xp} XP)`, inline: true },
+              { name: 'Joined', value: m?.joinedAt ? `<t:${Math.floor(m.joinedAt.getTime()/1000)}:R>` : '—', inline: true }
+            )
+        ]
+      });
+    }
+    if (name === 'serverinfo') {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xfbbf24)
+            .setTitle(guild.name)
+            .setThumbnail(guild.iconURL({ size: 256 }))
+            .addFields(
+              { name: 'Members', value: `${guild.memberCount}`, inline: true },
+              { name: 'Channels', value: `${guild.channels.cache.size}`, inline: true },
+              { name: 'Roles', value: `${guild.roles.cache.size}`, inline: true }
+            )
+        ]
+      });
+    }
+    if (name === 'snipe') {
+      const s = global.__snipes?.get(interaction.channelId);
+      if (!s) return interaction.reply({ content: 'Nothing to snipe.', ephemeral: true });
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xed4245)
+            .setAuthor({ name: s.author, iconURL: s.avatar })
+            .setDescription(s.content || '*empty*')
+            .setTimestamp(s.at)
+        ]
+      });
+    }
+    if (name === 'membercount') {
+      return interaction.reply(`**${guild.name}** has **${guild.memberCount}** members.`);
+    }
+    if (name === 'uptime') {
+      const s = Math.floor(process.uptime());
+      return interaction.reply(`Uptime: **${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ${s%60}s**`);
+    }
+    if (name === 'coinflip') {
+      return interaction.reply(`**${Math.random() < 0.5 ? 'Heads' : 'Tails'}**`);
+    }
+    if (name === 'poll') {
+      const q = interaction.options.getString('question', true);
+      const msg = await interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('POLL').setDescription(q)],
+        fetchReply: true
+      });
+      await msg.react('⬆️').catch(() => {});
+      await msg.react('⬇️').catch(() => {});
+      return;
+    }
+    if (name === 'remind') {
+      const timeStr = interaction.options.getString('time', true);
+      const note = interaction.options.getString('text', true);
+      const ms = parseDuration(timeStr);
+      if (!ms) return interaction.reply({ content: 'Invalid time.', ephemeral: true });
+      await interaction.reply({ content: `Reminder set <t:${Math.floor((Date.now()+ms)/1000)}:R>`, ephemeral: true });
+      setTimeout(() => {
+        interaction.channel.send(`${user} **Reminder:** ${note}`).catch(() => {});
+      }, ms);
+      return;
+    }
+    if (name === 'choose') {
+      const parts = interaction.options.getString('options', true).split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+      if (parts.length < 2) return interaction.reply({ content: 'Use: a | b | c', ephemeral: true });
+      return interaction.reply(`I pick: **${parts[Math.floor(Math.random() * parts.length)]}**`);
+    }
+    if (name === 'claim') {
+      if (!isTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: '`/claim` only works inside tickets.', ephemeral: true });
+      }
+      await interaction.reply({ content: 'Opening claim menu…', ephemeral: true });
+      await startRewardClaimFlow(interaction.channel, user);
+      return;
+    }
+    if (name === 'ultimate') {
+      const u = interaction.options.getUser('user') || user;
+      const coins = data.coins?.[u.id] || 0;
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xfbbf24)
+            .setTitle('Ultimate balance')
+            .setDescription(`**${u.username}** has **${coins}** coins`)
+        ]
+      });
+    }
+    if (name === 'online') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      const role = interaction.options.getRole('role', true);
+      await guild.members.fetch().catch(() => {});
+      const online = guild.members.cache.filter(
+        (m) => !m.user.bot && m.roles.cache.has(role.id) && m.presence && ['online','idle','dnd'].includes(m.presence.status)
+      );
+      const names = [...online.values()].slice(0, 30).map((m) => m.displayName).join('\n') || 'None online';
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(`Online · ${role.name}`).setDescription(names)]
+      });
+    }
+    if (name === 'pay') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      const target = interaction.options.getUser('user', true);
+      ensureStocks(data);
+      const stock = getStock('mcfa');
+      if (!stock.length) return interaction.reply({ content: 'MCFA stock empty.', ephemeral: true });
+      const item = stock.shift();
+      data.mcfaStock = data.stocks.mcfa;
+      saveData();
+      try {
+        await target.send(`Your reward:\n||${item}||`);
+        return interaction.reply({ content: `Paid **1 MCFA** to **${target.username}** (DM).`, ephemeral: true });
+      } catch {
+        stock.unshift(item);
+        saveData();
+        return interaction.reply({ content: 'Could not DM user — stock restored.', ephemeral: true });
+      }
+    }
+    if (name === 'lock') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false }).catch(() => {});
+      return interaction.reply('Channel locked.');
+    }
+    if (name === 'unlock') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null }).catch(() => {});
+      return interaction.reply('Channel unlocked.');
+    }
+    if (name === 'slowmode') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      const sec = interaction.options.getInteger('seconds', true);
+      await interaction.channel.setRateLimitPerUser(sec).catch(() => {});
+      return interaction.reply(sec ? `Slowmode **${sec}s**` : 'Slowmode off.');
+    }
+    if (name === 'say') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      await interaction.reply({ content: 'Sent.', ephemeral: true });
+      return interaction.channel.send(interaction.options.getString('text', true));
+    }
+    if (name === 'announce') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      await interaction.reply({ content: 'Sent.', ephemeral: true });
+      return interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xfbbf24)
+            .setTitle('Announcement')
+            .setDescription(interaction.options.getString('text', true))
+            .setFooter({ text: `By ${user.username}` })
+        ]
+      });
+    }
+    if (name === 'addxp') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      const target = interaction.options.getUser('user', true);
+      const amount = interaction.options.getInteger('amount', true);
+      const row = getLevelData(guild.id, target.id);
+      row.xp += amount;
+      row.level = levelFromXp(row.xp);
+      saveData();
+      return interaction.reply(`Added **${amount}** XP to **${target.username}** → Level **${row.level}**`);
+    }
+    if (name === 'inv') {
+      const u = interaction.options.getUser('user') || user;
+      const count = getUserInvites(guild.id, u.id);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setTitle('Invites')
+            .setDescription(`**${u.username}** · **${count}** invites`)
+        ]
+      });
+    }
+    if (name === 'botinvite') {
+      const url = `https://discord.com/api/oauth2/authorize?client_id=${client.user.id}&permissions=8&scope=bot%20applications.commands`;
+      return interaction.reply({ content: url, ephemeral: true });
+    }
+    if (name === 'clearstock') {
+      if (!isStaff(member)) return interaction.reply({ content: 'Staff only.', ephemeral: true });
+      ensureStocks(data);
+      const n = (data.stocks.mcfa || []).length;
+      data.stocks.mcfa = [];
+      data.mcfaStock = [];
+      saveData();
+      return interaction.reply(`Cleared **${n}** MCFA stock.`);
+    }
+    if (name === 'staffstats') {
+      // defer to prefix-style by telling user to use $staffstats if complex
+      await interaction.reply({ content: 'Use `$staffstats` for the full staff panel (same data).', ephemeral: true });
+      return;
     }
   } catch (e) {
     console.error('interaction:', e.message);
@@ -2179,26 +2433,48 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 
+
+client.on('messageDelete', (message) => {
+  try {
+    if (!message.guild || message.author?.bot) return;
+    if (!global.__snipes) global.__snipes = new Map();
+    global.__snipes.set(message.channel.id, {
+      content: message.content || '',
+      author: message.author?.tag || 'Unknown',
+      avatar: message.author?.displayAvatarURL?.() || undefined,
+      at: Date.now()
+    });
+  } catch (_) {}
+});
+
 client.on('messageCreate', async (message) => {
   if (!message.guild) return;
 
-  // Level XP for real users (not bots)
-  if (!message.author.bot && message.content && !message.content.startsWith(PREFIX)) {
-    try {
-      const res = addMessageXp(message.guild.id, message.author.id);
-      if (res?.leveled) {
-        const gg = new EmbedBuilder()
-          .setColor(0x57f287)
-          .setTitle('🎉 Level up! GG')
-          .setDescription(
-            `${message.author} reached **Level ${res.level}**!
-` +
-              `Keep chatting to climb the leaderboard. Use \`/level\` or \`$level\`.`
-          )
-          .setThumbnail(message.author.displayAvatarURL({ size: 128 }));
-        message.channel.send({ embeds: [gg] }).catch(() => {});
+  // Level XP for real users (not bots) — any chat, not only long messages
+  if (!message.author.bot) {
+    const isCmd = message.content && message.content.startsWith(PREFIX);
+    // Still grant XP for normal chat; skip pure command lines
+    if (!isCmd) {
+      try {
+        const res = addMessageXp(message.guild.id, message.author.id);
+        if (res && res.gain) {
+          // silent gain; only announce level-ups
+        }
+        if (res?.leveled) {
+          const gg = new EmbedBuilder()
+            .setColor(0x57f287)
+            .setTitle('LEVEL UP — GG')
+            .setDescription(
+              `${message.author} reached **Level ${res.level}**!\n` +
+                `Use \`/level\` or \`$level\` to see your card.`
+            )
+            .setThumbnail(message.author.displayAvatarURL({ size: 128 }));
+          message.channel.send({ embeds: [gg] }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('level xp:', e.message);
       }
-    } catch (_) {}
+    }
   }
 
   // ========== Falcon -i invite sync ==========
@@ -2455,7 +2731,7 @@ client.on('messageCreate', async (message) => {
       .slice(0, 15);
 
     const lines = ranked.map((r, i) => {
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+      const medal = `**#${i + 1}**`;
       return `${medal} ${r.m} — **${r.score}** pts · 💬 ${r.messages} · 🎟️ ${r.invites}`;
     });
 
@@ -2478,7 +2754,7 @@ client.on('messageCreate', async (message) => {
     if (!isStaff(message.member)) return message.reply('Staff only.');
     const sub = (args[0] || '').toLowerCase();
     if (!sub || sub === 'list' || sub === 'status') {
-      return message.reply({ embeds: [buildStockListEmbed()] });
+      return message.reply({ embeds: [buildStockListEmbed(message.guild)] });
     }
     return message.reply('`$stock list` — show all product stock counts');
   }
@@ -2493,7 +2769,7 @@ client.on('messageCreate', async (message) => {
 
     if (!sub || sub === 'count' || sub === 'left') {
       return message.reply(
-        `${meta.emoji} **${meta.label}** stock: **${getStock(productKey).length}**`
+        `**${meta.label}** stock: **${getStock(productKey).length}**`
       );
     }
     if (sub === 'list' || sub === 'paste') {
@@ -3239,7 +3515,7 @@ if (sub === 'clear') {
           const u = await client.users.fetch(e.id);
           name = u.username;
         } catch (_) {}
-        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+        const medal = `**#${i + 1}**`;
         lines.push(`${medal} **${name}** — ${e.bal.toLocaleString()} 🪙`);
       }
 
@@ -3672,18 +3948,261 @@ if (sub === 'clear') {
       try {
         name = (await client.users.fetch(e.id)).username;
       } catch (_) {}
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+      const medal = `**#${i + 1}**`;
       lines.push(`${medal} **${name}** — Lvl ${e.level} · ${e.xp.toLocaleString()} XP`);
     }
     return message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xfbbf24)
-          .setTitle('🏆 XP Leaderboard')
+          .setTitle('XP LEADERBOARD')
           .setDescription(lines.join('\n'))
           .setFooter({ text: 'Ultimate Rewards · Levels' })
       ]
     });
+  }
+
+
+  // ========== $addxp @user amount (staff) ==========
+  if (cmd === 'addxp') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const target = message.mentions.users.first();
+    const amount = parseInt(args.find((a) => /^\d+$/.test(a)), 10);
+    if (!target || !amount) return message.reply('Usage: `$addxp @user 100`');
+    const row = getLevelData(message.guild.id, target.id);
+    row.xp += amount;
+    row.level = levelFromXp(row.xp);
+    saveData();
+    return message.reply(
+      `Added **${amount}** XP to **${target.username}** → Level **${row.level}** (${row.xp} XP)`
+    );
+  }
+
+  // ========== $ping ==========
+  if (cmd === 'ping') {
+    const sent = await message.reply('Pinging…');
+    const lat = sent.createdTimestamp - message.createdTimestamp;
+    return sent.edit(`🏓 **Pong** · Message \`${lat}ms\` · WS \`${Math.round(client.ws.ping)}ms\``);
+  }
+
+  // ========== $avatar ==========
+  if (cmd === 'avatar' || cmd === 'av' || cmd === 'pfp') {
+    const u = message.mentions.users.first() || message.author;
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle(`${u.username}'s avatar`)
+          .setImage(u.displayAvatarURL({ size: 4096 }))
+      ]
+    });
+  }
+
+  // ========== $userinfo / $serverinfo ==========
+  if (cmd === 'userinfo' || cmd === 'whois' || cmd === 'ui') {
+    const u = message.mentions.users.first() || message.author;
+    const m =
+      message.guild.members.cache.get(u.id) ||
+      (await message.guild.members.fetch(u.id).catch(() => null));
+    const roles = m
+      ? m.roles.cache
+          .filter((r) => r.id !== message.guild.id)
+          .sort((a, b) => b.position - a.position)
+          .map((r) => r.name)
+          .slice(0, 15)
+          .join(', ') || '—'
+      : '—';
+    const row = getLevelData(message.guild.id, u.id);
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setAuthor({ name: u.tag, iconURL: u.displayAvatarURL() })
+          .setThumbnail(u.displayAvatarURL({ size: 256 }))
+          .addFields(
+            { name: 'ID', value: u.id, inline: true },
+            { name: 'Level', value: `${row.level} (${row.xp} XP)`, inline: true },
+            { name: 'Joined', value: m?.joinedAt ? `<t:${Math.floor(m.joinedAt.getTime()/1000)}:R>` : '—', inline: true },
+            { name: 'Created', value: `<t:${Math.floor(u.createdTimestamp/1000)}:R>`, inline: true },
+            { name: 'Roles', value: roles.slice(0, 1024) }
+          )
+      ]
+    });
+  }
+
+  if (cmd === 'serverinfo' || cmd === 'si') {
+    const g = message.guild;
+    await g.members.fetch().catch(() => {});
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xfbbf24)
+          .setTitle(g.name)
+          .setThumbnail(g.iconURL({ size: 256 }))
+          .addFields(
+            { name: 'Members', value: `${g.memberCount}`, inline: true },
+            { name: 'Channels', value: `${g.channels.cache.size}`, inline: true },
+            { name: 'Roles', value: `${g.roles.cache.size}`, inline: true },
+            { name: 'Owner', value: `<@${g.ownerId}>`, inline: true },
+            { name: 'Created', value: `<t:${Math.floor(g.createdTimestamp/1000)}:R>`, inline: true },
+            { name: 'Boosts', value: `${g.premiumSubscriptionCount || 0} (lvl ${g.premiumTier})`, inline: true }
+          )
+      ]
+    });
+  }
+
+  // ========== $snipe (last deleted message) ==========
+  if (cmd === 'snipe') {
+    const s = global.__snipes?.get(message.channel.id);
+    if (!s) return message.reply('Nothing to snipe in this channel.');
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setAuthor({ name: s.author, iconURL: s.avatar })
+          .setDescription(s.content || '*empty*')
+          .setFooter({ text: 'Deleted message' })
+          .setTimestamp(s.at)
+      ]
+    });
+  }
+
+  // ========== $say ==========
+  if (cmd === 'say') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const t = args.join(' ');
+    if (!t) return message.reply('Usage: `$say text`');
+    await message.delete().catch(() => {});
+    return message.channel.send(t);
+  }
+
+  // ========== $announce ==========
+  if (cmd === 'announce') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const t = args.join(' ');
+    if (!t) return message.reply('Usage: `$announce text`');
+    return message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xfbbf24)
+          .setTitle('📢 Announcement')
+          .setDescription(t)
+          .setFooter({ text: `By ${message.author.username}` })
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // ========== $membercount ==========
+  if (cmd === 'membercount' || cmd === 'mc') {
+    return message.reply(`👥 **${message.guild.name}** has **${message.guild.memberCount}** members.`);
+  }
+
+
+  // ========== $poll ==========
+  if (cmd === 'poll') {
+    const q = args.join(' ');
+    if (!q) return message.reply('Usage: `$poll Your question?`');
+    const m = await message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle('POLL')
+          .setDescription(q)
+          .setFooter({ text: `By ${message.author.username}` })
+      ]
+    });
+    await m.react('⬆️').catch(() => {});
+    await m.react('⬇️').catch(() => {});
+    return;
+  }
+
+  // ========== $remind ==========
+  if (cmd === 'remind' || cmd === 'reminder') {
+    const timeStr = args[0];
+    const note = args.slice(1).join(' ');
+    const ms = typeof parseDuration === 'function' ? parseDuration(timeStr) : null;
+    if (!ms || !note) return message.reply('Usage: `$remind 10m do homework`');
+    await message.reply(`OK — I will remind you <t:${Math.floor((Date.now()+ms)/1000)}:R>.`);
+    setTimeout(() => {
+      message.channel.send(`${message.author} **Reminder:** ${note}`).catch(() => {});
+    }, ms);
+    return;
+  }
+
+  // ========== $coinflip / $cf (quick) ==========
+  if (cmd === 'coinflip' || cmd === 'coin') {
+    const r = Math.random() < 0.5 ? 'Heads' : 'Tails';
+    return message.reply(`**${r}**`);
+  }
+
+  // ========== $choose ==========
+  if (cmd === 'choose' || cmd === 'pick') {
+    const parts = body.split(/\s+/).slice(1).join(' ').split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length < 2) return message.reply('Usage: `$choose a | b | c`');
+    return message.reply(`I pick: **${parts[Math.floor(Math.random() * parts.length)]}**`);
+  }
+
+  // ========== $uptime ==========
+  if (cmd === 'uptime') {
+    const s = Math.floor(process.uptime());
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return message.reply(`Uptime: **${h}h ${m}m ${sec}s**`);
+  }
+
+  // ========== $invite (bot invite) ==========
+  if (cmd === 'botinvite' || cmd === 'invitebot') {
+    const id = client.user.id;
+    const url = `https://discord.com/api/oauth2/authorize?client_id=${id}&permissions=8&scope=bot%20applications.commands`;
+    return message.reply(`Bot invite:\n${url}`);
+  }
+
+  // ========== $setnick ==========
+  if (cmd === 'setnick' || cmd === 'nick') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const u = message.mentions.members.first();
+    const nick = args.slice(1).join(' ') || null;
+    if (!u) return message.reply('Usage: `$setnick @user new nick`');
+    try {
+      await u.setNickname(nick);
+      return message.reply(`Nickname updated for **${u.user.username}**.`);
+    } catch {
+      return message.reply('Could not change nickname (role hierarchy / permissions).');
+    }
+  }
+
+  // ========== $slowmode ==========
+  if (cmd === 'slowmode') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    const sec = Math.min(21600, Math.max(0, parseInt(args[0], 10) || 0));
+    try {
+      await message.channel.setRateLimitPerUser(sec);
+      return message.reply(sec ? `Slowmode set to **${sec}s**.` : 'Slowmode off.');
+    } catch {
+      return message.reply('Failed to set slowmode.');
+    }
+  }
+
+  // ========== $lock / $unlock ==========
+  if (cmd === 'lock') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    try {
+      await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
+      return message.reply('Channel locked.');
+    } catch {
+      return message.reply('Failed to lock.');
+    }
+  }
+  if (cmd === 'unlock') {
+    if (!isStaff(message.member)) return message.reply('Staff only.');
+    try {
+      await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
+      return message.reply('Channel unlocked.');
+    } catch {
+      return message.reply('Failed to unlock.');
+    }
   }
 
   // ========== $staffstats ==========

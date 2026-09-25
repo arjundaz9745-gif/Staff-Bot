@@ -56,28 +56,42 @@ const MASS_PING_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 // Product stock keys (Ultimate multi-stock)
 const PRODUCT_STOCKS = {
-  mcfa: { label: 'MCFA', emoji: '', cmd: ['mcfa'] },
-  donut: { label: 'DONUT', emoji: '', cmd: ['donut'] },
-  hypixel: { label: 'HYPIXEL', emoji: '', cmd: ['hypixel', 'hyp'] },
-  nitro: { label: 'NITRO PROMO', emoji: '', cmd: ['nitro'] },
-  netflix: { label: 'NETFLIX', emoji: '', cmd: ['netflix'] },
-  steam: { label: 'STEAM', emoji: '', cmd: ['steam'] },
-  crunchyroll: { label: 'CRUNCHYROLL', emoji: '', cmd: ['crunchyroll', 'cruncyroll', 'cr'] },
-  xbox: { label: 'XBOX', emoji: '', cmd: ['xbox'] },
-  custom: { label: 'CUSTOM', emoji: '', cmd: ['custom'] }
+  // emojiNames = exact names of YOUR server custom emojis
+  mcfa: { label: 'MCFA', emoji: '', emojiNames: ['MINECRAFT', 'minecraft', 'mcfa'], cmd: ['mcfa'] },
+  donut: { label: 'DONUT', emoji: '', emojiNames: ['donut', 'Donut'], cmd: ['donut'] },
+  hypixel: { label: 'HYPIXEL', emoji: '', emojiNames: ['hypixel', 'Hypixel'], cmd: ['hypixel', 'hyp'] },
+  nitro: { label: 'NITRO PROMO', emoji: '', emojiNames: ['Nitro', 'nitro'], cmd: ['nitro'] },
+  netflix: { label: 'NETFLIX', emoji: '', emojiNames: ['netflix', 'Netflix'], cmd: ['netflix'] },
+  steam: { label: 'STEAM', emoji: '', emojiNames: ['STEAM', 'steam', 'Steam'], cmd: ['steam'] },
+  crunchyroll: { label: 'CRUNCHYROLL', emoji: '', emojiNames: ['crunchyroll', 'Crunchyroll'], cmd: ['crunchyroll', 'cruncyroll', 'cr'] },
+  xbox: { label: 'XBOX', emoji: '', emojiNames: ['xbox', 'Xbox', 'XBOX'], cmd: ['xbox'] },
+  custom: { label: 'CUSTOM', emoji: '', emojiNames: ['custom'], cmd: ['custom'] }
 };
 
 /** Prefer guild custom emoji by name, else plain text */
-function e(guild, names, fallback = '') {
-  if (!guild || !guild.emojis) return fallback;
+function e(guild, names, fallback = '•') {
+  if (!guild || !guild.emojis) return fallback || '•';
   const list = Array.isArray(names) ? names : [names];
   for (const name of list) {
+    if (!name) continue;
     const found = guild.emojis.cache.find(
       (em) => em.name && em.name.toLowerCase() === String(name).toLowerCase()
     );
-    if (found) return found.toString();
+    if (found) return found.toString(); // <:name:id>
   }
-  return fallback;
+  return fallback || '•';
+}
+
+function productEmoji(guild, key) {
+  const meta = PRODUCT_STOCKS[key];
+  if (!meta) return '•';
+  const names = [
+    ...(meta.emojiNames || []),
+    key,
+    meta.label,
+    ...(meta.cmd || [])
+  ];
+  return e(guild, names, meta.emoji || '•');
 }
 
 
@@ -140,7 +154,7 @@ function buildStockListEmbed(guild) {
   ensureStocks(data);
   const count = (key) => (data.stocks[key] || []).length;
   const line = (label, key) => {
-    const mark = e(guild, [key, label.replace(/\s+/g, '')], '•');
+    const mark = productEmoji(guild, key);
     return `${mark} **${label}**  |  \`${count(key)}\``;
   };
 
